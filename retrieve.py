@@ -8,25 +8,18 @@ from dataset.LVIS import LVISDataset
 from dataset.VRP import VRPDataset
 from torch.utils.data import DataLoader
 from transformers import logging, CLIPModel, CLIPImageProcessor, CLIPVisionModel, AutoImageProcessor, AutoModel
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 from PIL import Image
-import pycocotools.mask as mask
+
 import numpy as np
 from tqdm import tqdm
-from models.visionllama import VisionLLaMA
-from matplotlib.colors import ListedColormap
 from scipy.spatial.distance import cdist
 import pickle
 import yaml
 import argparse
 import requests
 import os
-import time
-import cProfile
-import pstats
+
 from collections import Counter
-from mapcalc import calculate_map
 
 
 def load_image(image_file):
@@ -44,8 +37,9 @@ def main(args):
     with open(args.config, 'r') as file:
         config = yaml.safe_load(file)
     config["batch_size"] = 1
-
+    cropped = "cropped_" if config["crop_image"] else ""
     total = 0
+    from pycocotools import mask as _mask
 
     if "clip" in config["vision_encoder"]:
         model = CLIPVisionModel.from_pretrained(config["vision_encoder"]).to(config["device"])
@@ -84,8 +78,27 @@ def main(args):
             answers = batch['answer']
             images = batch['path_to_image']
             image_id = batch['id']
+            bbox = batch['bbox'][0]
+            original_seg = batch['original_segmentation'][0]
             image_ids.append(image_id[0])
             all_masks.append(masks[0])
+
+            if config["crop_image"]:
+                path_to_image = images[0]
+                img = np.array(Image.open(path_to_image).convert('RGB'))
+                m = _mask.decode(original_seg).astype(bool)
+                # print(mask.shape)
+                # print(img.shape)
+                img[~m] = np.array([255,255,255])
+                bbox = [int(x) for x in bbox]
+                img = img[bbox[1]: bbox[1] + bbox[3], bbox[0]:bbox[0] + bbox[2]]
+                h, w, c = img.shape
+                if h < 16 or w < 16:
+                    continue
+                images = [Image.fromarray(np.uint8(img)).convert('RGB')]
+            else:
+                images = [load_image(x) for x in images]
+      
 
             # if type(masks) == list:
             #     for i in range(len(masks)):
@@ -95,27 +108,18 @@ def main(args):
 
             #print(images)
 
-            inputs = processor(images=[load_image(x) for x in images], return_tensors="pt").to(config["device"])
+            inputs = processor(images=images, return_tensors="pt").to(config["device"])
             #print(inputs)
             image_forward_outs = model(inputs['pixel_values'], output_hidden_states=True)
 
             mask = torch.BoolTensor(masks[0][1:]).to(config["device"])
-            image_features_high = image_forward_outs.hidden_states[config["feature_select_layer"]][0,1:,:][mask].detach().cpu()
-            #image_features_low = image_forward_outs.hidden_states[0][0,1:,:][mask].detach().cpu()
-            image_feats = [image_features_high]
 
-            object_feature = None
-            for feat in image_feats:
+            if config["crop_image"]:
+                object_feature = image_forward_outs.hidden_states[-1][0,0,:].detach().cpu()
+            else:
+                image_features_high = image_forward_outs.hidden_states[-1][0,1:,:][mask].detach().cpu()
+                object_feature = torch.mean(image_features_high, dim = 0)
 
-
-                if object_feature == None:
-                    object_feature = feat
-                else:
-                    object_feature = torch.cat((object_feature, feat), axis = 0)
-
-            
-
-            object_feature = torch.mean(object_feature, dim = 0)
             object_feature /= object_feature.norm(dim=-1, keepdim=True)
             if len(torch.nonzero(torch.isnan(object_feature.view(-1)))) > 0:
                 print(object_feature)
@@ -134,7 +138,8 @@ def main(args):
         retrieval_set['values'] = labels
         retrieval_set['id'] = image_ids
         
-        with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{config["feature_select_layer"]}_{config["vision_encoder"].split("/")[-1]}.pkl', 'wb') as f:
+        
+        with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl', 'wb') as f:
             pickle.dump(retrieval_set, f)
 
     elif args.test:
@@ -143,7 +148,7 @@ def main(args):
 
         config["batch_size"] = 1
         cache = {} # Saving most similar objects
-        CACHE_PATH = f'cache/{config["task"]}/retrieval_cache_{config["examples_per_class"]}_{config["feature_select_layer"]}_{config["vision_encoder"].split("/")[-1]}.pkl'
+        CACHE_PATH = f'cache/{config["task"]}/retrieval_cache_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
         if os.path.exists(CACHE_PATH):
             with open(CACHE_PATH, 'rb') as f:
                 cache = pickle.load(f)
@@ -162,7 +167,7 @@ def main(args):
             dataset = CountCOCODataset(patch_size=config['patch_size'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
 
-        with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{config["feature_select_layer"]}_{config["vision_encoder"].split("/")[-1]}.pkl', 'rb') as f:
+        with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl', 'rb') as f:
             data = pickle.load(f)
         
         from transformers import CLIPProcessor, CLIPModel
@@ -187,18 +192,6 @@ def main(args):
         majority_correct_by_category = {}
         total_by_category = {}
 
-        # MAP Calc CODE
-        # gt_boxes = []
-        # gt_labels = []
-        # pred_labels = []
-        # pred_boxes = []
-        # scores = []
-
-        # obj_id = 0
-        # obj_name_to_id = {}
-        # for k in dataset.class_counts:
-        #     obj_name_to_id[k] = obj_id
-        #     obj_id += 1
         import json
         data = json.load(open("/data/ossowski/COCO2017/annotations/instances_val2017.json"))
         coco_eval_mapping = {c['name']:c['id'] for c in data['categories']}
@@ -216,29 +209,35 @@ def main(args):
             if b_num not in cache:
 
                 
+                if config["crop_image"]:
+                    path_to_image = images[0]
+                    img = np.array(Image.open(path_to_image))
+                    m = mask.decode(original_seg).astype(bool)
+                    # print(mask.shape)
+                    # print(img.shape)
+                    img[~m] = np.array([255,255,255])
+                    bbox = [int(x) for x in bbox]
+                    img = img[bbox[1]: bbox[1] + bbox[3], bbox[0]:bbox[0] + bbox[2]]
+                    h, w, c = img.shape
+                    if h < 2 or w < 2:
+                        continue
+                    images = [Image.fromarray(np.uint8(img)).convert('RGB')]
+                else:
+                    images = [load_image(x) for x in images]
 
-
-                inputs = processor(images=[load_image(x) for x in images], return_tensors="pt").to(config["device"])
+                inputs = processor(images=images, return_tensors="pt").to(config["device"])
                 image_forward_outs = model(inputs['pixel_values'], output_hidden_states=True)
                 
                 #projected_image_hidden_states = text_model.visual_projection(image_forward_outs.hidden_states[-1])
                 #print(image_forward_outs.hidden_states[-1].shape)
                 mask = torch.BoolTensor(masks[0][1:]).to(config["device"])
-                image_features_high = image_forward_outs.hidden_states[{config["feature_select_layer"]}][0,1:,:][mask].detach().cpu()
-                #image_features_high = image_forward_outs.hidden_states[-1][0,1:,:][mask].detach().cpu()
-                #image_features_low = image_forward_outs.hidden_states[0][0,1:,:][mask].detach().cpu()
-                image_feats = [image_features_high]
 
-                object_feature = None
-                for feat in image_feats:
+                if config["crop_image"]:
+                    object_feature = image_forward_outs.hidden_states[-1][0,0,:].detach().cpu()
+                else:
+                    image_features_high = image_forward_outs.hidden_states[-1][0,1:,:][mask].detach().cpu()
+                    object_feature = torch.mean(image_features_high, dim = 0)
 
-
-                    if object_feature == None:
-                        object_feature = feat
-                    else:
-                        object_feature = torch.cat((object_feature, feat), axis = 0)
-
-                object_feature = torch.mean(object_feature, dim = 0).to(config["device"])
                 object_feature /= object_feature.norm(dim=-1, keepdim=True)
                 object_feature = object_feature.unsqueeze(0)
 
@@ -263,6 +262,7 @@ def main(args):
             
 
             predictions = [labels[x] for x in c]
+            
             #print(predictions, answers[0])
             from collections import Counter
             

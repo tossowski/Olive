@@ -81,27 +81,16 @@ class ObjectEncoder(nn.Module):
         return last_hidden_state, pooled_output, hidden_states
 
 
-    # Expects segmentations to be b_s x 256 binary tensor
-    # Returns batch_size x hidden dimension tensor (representation of object)
+    # Expects segmentations to be (b_s, patch_size ** 2 + 1) binary tensor
+    # Returns (batch_size, hidden dimension tensor) (representation of object)
+    # Which can be inserted directly into the embedding space of LLM
     def forward(self, segmentations, image_features):
-
-        #return torch.randn(4, 4096)
-        # inputs = self.processor(images=image_features, return_tensors="pt").to(self.config["device"])
-        # transformer_output = self.model(**inputs).last_hidden_state
-        #print(segmentations.shape, image_features.shape)
-            
-
-        # Tentative Hack
-        #transformer_output = image_features.repeat(len(segmentations), 1, 1)
-
         transformer_output = image_features
-        #print(transformer_output.shape)
         lengths = torch.sum(segmentations, axis = 1).to(self.config["device"])
         max_length = max(lengths)
         attention_mask = torch.arange(max_length).to(self.config["device"])[None, :] < lengths[:, None]
         test = [transformer_output[i][segmentations[i]] for i in range(transformer_output.shape[0])]
         features = pad_sequence(test, batch_first=True)
+        #out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]
         out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]
-        #print(out.shape)
-        #print(self.projector(out).shape)
         return self.projector(out)

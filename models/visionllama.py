@@ -18,9 +18,11 @@ from models.object_encoder import ObjectEncoder
 
 class VisionLLaMA(nn.Module):
 
+    # Counts the number of trainable parameters in the model
     def count_trainable_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
+    # Helper function to load an image given the path to the image.
     def load_image(self, image_file):
         if type(image_file) == PIL.Image.Image:
             return image_file
@@ -32,109 +34,62 @@ class VisionLLaMA(nn.Module):
             image = Image.open(image_file).convert('RGB')
         return image
 
-    def __init__(self, config, only_use_shape_feature=False, retrieval_fn = None):
+    # Retrieval function a function which takes in query object features and returns
+    # information about retrieved objects.
+    def __init__(self, config, retrieval_fn = None):
         super().__init__()
         self.config = config
         self.retrieval_fn = retrieval_fn
-
-        if only_use_shape_feature:
-            self.conv1 = nn.Conv2d(1, 3, kernel_size=(3, 3), stride=1, padding=1).to(config["device"])
-            self.act1 = nn.ReLU().to(config["device"])
-            self.drop1 = nn.Dropout(0.3).to(config["device"])
-    
-            
-            self.pool2 = nn.MaxPool2d(kernel_size=(4, 4)).to(config["device"])
-    
-            self.flat = nn.Flatten().to(config["device"])
-    
-            self.fc3 = nn.Linear(9408, 768).to(config["device"])
-
-
-
         self.object_encoder = ObjectEncoder(config).to(config["device"])
 
-        if self.config["pretrained_object_encoder_checkpoint"] != "None":
-            self.object_encoder.load_state_dict(torch.load(self.config["pretrained_object_encoder_checkpoint"]))
-        #self.object_encoder.requires_grad_(False)
-
-        
-        
         base_model = self.config["llm_model"]
+
+        # Set up settings based on backbone LLM
         if "llama" in base_model:
             self.prompt_text = f"<s>[INST] <<SYS>>\n{config['system_prompt']}\n<</SYS>>\n\n"
             self.llama_model = AutoModelForCausalLM.from_pretrained(
             base_model,
             device_map="auto"
         )
+            self.tokenizer = LlamaTokenizer.from_pretrained(base_model)
+            self.tokenizer.padding_side = "right"
+            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         elif "gpt2" in base_model:
             self.prompt_text = ""
             self.llama_model = AutoModelForCausalLM.from_pretrained(
             base_model
         ).to(self.config["device"])
+            self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+            self.tokenizer.padding_side = "right"
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
         elif "llava" in base_model:
             self.prompt_text = "<image>\nUSER: "
             self.llama_model = LlavaForConditionalGeneration.from_pretrained("llava-hf/llava-1.5-7b-hf", device_map="auto")
-        
-        
-
-        #print(self.llama_model)
-
-        if "llama" in base_model.lower():
-            default_layers = len(self.llama_model.model.layers)
-        elif "gpt2" in base_model:
-            default_layers = len(self.llama_model.transformer.h)
-        elif "llava" in base_model:
-            default_layers = 0 # Don't resize llava
-        
-        if self.config["n_decoder_layers"] < default_layers:
-            n_layers = self.config["n_decoder_layers"]
-            print(f"Resizing decoder layers to {n_layers} ...")
-            
-            if "llama" in base_model.lower():
-                self.llama_model.model.layers = self.llama_model.model.layers[:self.config["n_decoder_layers"]]
-            elif "gpt2" in base_model:
-                self.llama_model.transformer.h = self.llama_model.transformer.h[:self.config["n_decoder_layers"]]
-            #print(self.llama_model)
-
-        if "llama" in base_model.lower():
-            self.tokenizer = LlamaTokenizer.from_pretrained(base_model)
-        elif "gpt2" in base_model:
-            self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
-        elif "llava" in base_model.lower():
             processor = AutoProcessor.from_pretrained("llava-hf/llava-1.5-7b-hf")
             self.tokenizer = processor.tokenizer
             self.image_processor = processor.image_processor
-
-        if "llava" in self.config["llm_model"]:
             self.object_encoder.projector  = self.llama_model.multi_modal_projector
             self.object_encoder.processor = self.image_processor
             self.object_encoder.model = self.llama_model.vision_tower
             self.object_encoder.projector.requires_grad_(False)
-            assert self.config["patch_size"] == 24
-
-        self.tokenizer.padding_side = "right"
-        if "llava" in base_model:
-            self.tokenizer.padding_size = "left"
-        
-        self.tokenizer.add_tokens(["[obj]"])
-        self.tokenizer.add_tokens(["[start]"])
-
-        if "llama" in base_model or "llava" in base_model:
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-            #self.tokenizer.pad_token = self.tokenizer.eos_token
-        elif "gpt2" in base_model:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+            self.tokenizer.padding_size = "left"
+            assert self.config["patch_size"] == 24
+        
+        # Add special token for object
+        self.tokenizer.add_tokens(["[obj]"])
 
-
+        # This token is a dummy to help with finding the start of generation
+        # We mask everything with -100 before this token so it doesn't count
+        # towards the loss
+        self.tokenizer.add_tokens(["[start]"])
+        
         self.llama_model.resize_token_embeddings(len(self.tokenizer))
 
         if "llava" in base_model:
             self.decode_start_token = self.tokenizer.convert_tokens_to_ids(":")
         else:
             self.decode_start_token = self.tokenizer.convert_tokens_to_ids("[start]")
-
-        # self.prompt = self.tokenizer(self.prompt_text).input_ids
-
 
         self.obj_token_id = self.tokenizer.convert_tokens_to_ids("[obj]")
         self.pad_token_id = self.tokenizer.convert_tokens_to_ids("[PAD]")
@@ -144,10 +99,8 @@ class VisionLLaMA(nn.Module):
             # if "gpt2" in base_model:
             #     self.llama_model.lm_head.requires_grad_(True)
 
-        #print(self.llama_model)
-            #self.llama_model.lm_head.requires_grad_(True)
-        #print(sum(p.numel() for p in self.llama_model.parameters() if p.requires_grad))
-        
+        print(f"Initialized model with {self.config['llm_model']} LLM backbone and {self.config['vision_encoder']} Vision Encoder")
+        print(f"It has {self.count_trainable_parameters()} trainable parameters")
 
     def prepare_for_training(self):
         if not self.config["freeze_llm"]:
@@ -162,15 +115,11 @@ class VisionLLaMA(nn.Module):
             self.llama_model = prepare_model_for_kbit_training(self.llama_model)
             self.llama_model = get_peft_model(self.llama_model, peft_config)
 
-    def resize_tensor(self, input_tensor, new_size):
-        # Assuming input_tensor is of shape (batch_size, channels, height, width)
-
-        # Perform the resizing
-        resized_tensor = F.interpolate(input_tensor, size=new_size, mode='bilinear', align_corners=False)
-
-        return resized_tensor
-
-    # special_values: list of elements. each element is (n_segmentations x 4096)
+    # Key function which replaces [obj] tokens in input with their vector representation
+    # special_values: list of tensor of object vectors. each element is (n_segmentations x 4096)
+    # sentences: list of user text inputs
+    # image_features: If supplied, will concatenate the patch image features to the beginning of input embeds
+    # labels: A copy of sentences
     def embed_with_special_tokens(self, sentences, special_values, image_features=None, labels=None):
         tokenizer_output = self.tokenizer(sentences, padding=True)
         attention_mask = torch.tensor(tokenizer_output.attention_mask, dtype=torch.long).to(self.config["device"])
@@ -186,7 +135,7 @@ class VisionLLaMA(nn.Module):
                 image_features, inputs_embeds, input_ids, attention_mask, input_ids
             )
 
-            batch_tokens[:, 1:578] = 1 # We will override this with the image features layer. Otherwise this causes an embedding lookup error because it is filled with -100
+            batch_tokens[:, 1:578] = 1 # We will override this with the image features later. Otherwise this causes an embedding lookup error because it is filled with -100
             # Just need to make sure to reset it later
 
             inputs_embeds = inputs_embeds.to(self.config["device"])
@@ -257,11 +206,6 @@ class VisionLLaMA(nn.Module):
                 cur_new_attn_mask.append(cur_attn_mask)
                 if labels is not None:
                     cur_new_labels.append(cur_labels)
-            
-
-            #cur_new_embeds = [x.to(device=self.config["device"]) for x in cur_new_embeds]
-            
-            # Combining object + word features in a sentence
 
             cur_new_embeds = torch.cat(cur_new_embeds, dim=0)
 
@@ -278,26 +222,21 @@ class VisionLLaMA(nn.Module):
                     cur_new_labels[1:578] = -100
                 new_labels.append(cur_new_labels)
             
-
-            
-
-        #print([x.shape for x in new_embeds])
-        # Combining embeds for each sentence to get batch embedding
-        #print([x.shape for x in new_embeds])
         
         new_input_embeds = torch.stack(new_embeds, dim=0)
         new_attn_mask = torch.stack(new_attn_mask, dim=0)
         if labels is not None:
             new_labels  = torch.stack(new_labels, dim=0).to(self.config["device"])
 
-            
-
-        #return torch.cat(new_embeds, axis = 0)
-        #print(new_labels[0])
         if "llava" in self.config["llm_model"]:
             new_input_embeds[:, 1:578, :] = final_image_input
-        #print(new_input_embeds)
-        #print(new_labels)
+ 
+        if image_features != None and "llava" not in self.config["llm_model"]:
+            n_patches = 1 + self.config["patch_size"] ** 2
+            new_input_embeds = torch.cat((image_features, new_input_embeds), axis = 1)
+            new_labels = torch.cat((-100 * torch.ones((self.config["batch_size"], n_patches), dtype=torch.long).to(self.config["device"]), new_labels), axis = 1)
+            new_attn_mask = torch.cat((torch.ones((self.config["batch_size"], n_patches), dtype=torch.long).to(self.config["device"]), new_attn_mask), axis = 1)
+
         return new_input_embeds.to(self.config["device"]), new_labels, new_attn_mask.to(self.config["device"])
 
     def prepare_input(self, segmentations, images, sentences, labels=None, return_retrieved_info = False):
@@ -385,12 +324,12 @@ class VisionLLaMA(nn.Module):
 
 
         labels = torch.tensor(self.tokenizer(full_text_input, padding=True).input_ids, dtype=torch.long).to(self.config["device"])
-        if "llava" in self.config["llm_model"]:
+        if self.config["use_image_features"] or "llava" in self.config["llm_model"]:
             #print(len(image_features))
             #print(image_features[0].shape)
             image_features = torch.cat(image_features, 0).to(self.config["device"])
             image_features = self.object_encoder.projector(image_features)
-            print(image_features.shape)
+            #print(image_features.shape)
             final_input, label_input, attention_mask = self.embed_with_special_tokens(full_text_input, object_embeddings, image_features=image_features, labels=labels)
         else:
             final_input, label_input, attention_mask = self.embed_with_special_tokens(full_text_input, object_embeddings, labels=labels)
@@ -445,8 +384,6 @@ class VisionLLaMA(nn.Module):
     # Image: list of list of paths to images
     # Segmentations: List of list of Binary 16x16 mask
     def forward(self, segmentations, images, sentences, labels=None):
-        
-            #print(images)
         final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels)
         
         for i in range(len(label_input)):
@@ -473,7 +410,6 @@ class VisionLLaMA(nn.Module):
 
  
         decoded_output = self.tokenizer.batch_decode(out, skip_special_tokens=True)
-        #print(decoded_output)
         if len(decoded_output) == 1:
             decoded_output = decoded_output[0]
 
@@ -506,14 +442,11 @@ class VisionLLaMA(nn.Module):
             n_layers = self.config["n_decoder_layers"]
             SAVE_PATH += f"{n_layers}_decoder_layers_"
 
-        if self.config["use_only_shape_feature"]:
-            SAVE_PATH += "shape_feature_only_"
-
         if self.config["use_retrieval"]:
             SAVE_PATH += "retrieval_"
         
-        # if not self.config["use_CLS_emb"]:
-        #     SAVE_PATH += "no_CLS_emb"
+        if self.config["use_image_features"]:
+            SAVE_PATH += "with_img_features_"
 
         if self.config["task"] == "image_captioning":
             if self.config["use_object_annotations"]:
@@ -539,9 +472,9 @@ class VisionLLaMA(nn.Module):
 
     def load(self):
         SAVE_PATH = self._get_save_path()
-        print(SAVE_PATH)
+        print(f"The save path is: {SAVE_PATH}")
         self.object_encoder.load_state_dict(torch.load(os.path.join(SAVE_PATH, "llama_2_7b_adapter_finetuned")))
-        print(f"Loaded LLM model and Object Encoder from {SAVE_PATH}")
+        print(f"Loaded Object Encoder checkpoint from {SAVE_PATH}")
         if self.config["freeze_llm"]:
             if "gpt2" in self.config["llm_model"]:
                 return
@@ -554,13 +487,10 @@ class VisionLLaMA(nn.Module):
         
 
     def save(self):
-        
 
         SAVE_PATH = self._get_save_path()
         os.makedirs(SAVE_PATH, exist_ok=True)
-        # if self.config[""]
 
-        #os.makedirs(os.path.join(self.config["save_path"], "llama_2_7b_adapter_finetuned"), exist_ok=True)
         if not self.config["freeze_llm"] or "gpt2" in self.config["llm_model"]:
             self.llama_model.save_pretrained(SAVE_PATH)
         

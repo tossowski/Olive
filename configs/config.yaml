@@ -27,13 +27,14 @@ early_stopping: False
 check_loss_steps: 1000
 examples_per_class: 1000000
 pretrained_object_encoder_checkpoint: "None"
-#pretrained_object_encoder_checkpoint: "llama_2_7b_adapter"
 n_epochs: 1
-use_only_shape_feature: False
-use_retrieval: False
-retrieval_k: 11
 
-use_CLS_emb: False
+
+use_retrieval: False # Whether or not to retrieve in-context examples
+retrieval_k: 11 # Number of retrieved in-context examples
+use_image_features: False # Concatenate ViT Image Features to LLM Input Embeddings (slow!)
+crop_image: True
+#use_CLS_emb: False
 feature_select_layer: 1
 # use_cached_features: True
 # cache_dir: "/data/ossowski/cache"

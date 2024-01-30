@@ -46,7 +46,8 @@ class COCOObjectDataset(Dataset):
             
             for i, segmentation in enumerate(segmentations):
                 bbox = bboxes[i]
-                insert = 1 if self.config["use_CLS_emb"] else 0
+                #insert = 1 if self.config["use_CLS_emb"] else 0
+                insert = 1
                 seg = np.append(insert, mask.decode(segmentation).flatten())
                 if sum(seg[1:]) == 0:
                     bad_segs += 1
