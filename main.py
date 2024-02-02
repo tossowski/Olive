@@ -29,10 +29,10 @@ def main(args):
 
         print("Loading Dataset ...")
         if config['task'] == 'object_classification':
-            dataset = COCOObjectDataset(config, split="train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
+            dataset = COCOObjectDataset(config, split="val", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == "open_vocab_object_classification":
-            dataset = LVISDataset(split="val", patch_size=config['patch_size'])
+            dataset = LVISDataset(config, split="val", patch_size=config['patch_size'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2)
         elif config['task'] == 'image_captioning':
             dataset = VRPDataset("train", patch_size=config['patch_size'], use_object_annotations=config['use_object_annotations'])
@@ -50,8 +50,8 @@ def main(args):
             dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", split="train")
             train_loader = DataLoader(dataset, config["batch_size"],  shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'ALL':
-            dataset1 = RefCOCODataset("/data/ossowski/COCO2017/refcoco", "/data/ossowski/COCO2017/train")
-            dataset2 = VRPDataset("train", patch_size=config['patch_size'], use_object_annotations=config['use_object_annotations'])
+            dataset2 = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", patch_size=config["patch_size"], split="train")
+            dataset1 = VRPDataset("train", patch_size=config['patch_size'], use_object_annotations=config['use_object_annotations'])
             dataset3 = COCOObjectDataset(config, split="train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
             dataset1.entries.extend(dataset2.entries)
             dataset1.entries.extend(dataset3.entries)
@@ -61,7 +61,7 @@ def main(args):
         
         if config["use_retrieval"]:
             print(f"Using Retrieval with k = {config['retrieval_k']}")
-            model = VisionLLaMA(config, retrieval_fn = lambda x: dataset.retrieve_closest(x, config["retrieval_k"]))    
+            model = VisionLLaMA(config, retrieval_fn = lambda x, b: dataset.retrieve_closest(x, config["retrieval_k"], b_num=b))    
         else:
             model = VisionLLaMA(config, retrieval_fn = None)   
 
@@ -117,7 +117,14 @@ def main(args):
                         SAVE_PATH = model._get_save_path()
                         
                         model.save()
-                        plt.plot(list(range(len(past_losses))), past_losses)
+
+                        period = 100
+                        averages = []
+                        for i in range(period, len(past_losses)):
+                            subset = past_losses[i-period:i]
+                            averages.append(sum(subset) / len(subset))
+                            
+                        plt.plot(list(range(len(averages))), averages)
                         plt.xlabel("Num Parameter Updates")
                         plt.ylabel("Loss")
                         plt.title("Train Loss Graph")
@@ -141,103 +148,48 @@ def main(args):
 
 
     elif args.test:
-  
+        from eval.utils import eval_captioning, eval_object_classification
+        print("Loading Validation Dataset ...")
         if config['task'] == 'object_classification':
             dataset = COCOObjectDataset(config, split="val", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
         elif config['task'] == "open_vocab_object_classification":
-            dataset = LVISDataset(split="val", patch_size=config['patch_size'])
+            dataset = LVISDataset(config, split="val", patch_size=config['patch_size'])
         elif config['task'] == 'image_captioning':
             dataset = VRPDataset("test", patch_size=config['patch_size'])
         elif config['task'] == "refCOCOg":
-            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", split="val")
+            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", patch_size=config["patch_size"], split="val")
         elif config['task'] == 'counting':
             dataset = CountCOCODataset(patch_size=config['patch_size'])
 
 
         if config["use_retrieval"]:
+            print("Preparing Retrieval Dataset from Train Split ...")
             if config['task'] == 'object_classification':
                 retrieval_dataset = COCOObjectDataset(config, split="train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
             elif config['task'] == "open_vocab_object_classification":
-                retrieval_dataset = LVISDataset(split="train", patch_size=config['patch_size'])
+                retrieval_dataset = LVISDataset(config, split="train", patch_size=config['patch_size'])
             elif config['task'] == 'image_captioning':
                 retrieval_dataset = VRPDataset(patch_size=config['patch_size'])
             elif config['task'] == 'counting':
                 retrieval_dataset = CountCOCODataset(patch_size=config['patch_size'])
-            model = VisionLLaMA(config, retrieval_fn = lambda x: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], train_phase=False))    
+            model = VisionLLaMA(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], train_phase=False, b_num=b))    
         else:
             model = VisionLLaMA(config, retrieval_fn = None)    
 
-        OUTPUT_SAVE_PATH = os.path.join("outputs", config["task"], model._get_save_path().split("/")[-1] + ".pkl")
+        OUTPUT_SAVE_PATH = os.path.join("outputs", config["task"], model._get_save_path(load_raw=True).split("/")[-1] + ".pkl")
         os.makedirs(os.path.join("outputs", config["task"]), exist_ok=True)
         print(OUTPUT_SAVE_PATH)
 
         correct = 0
         total = 0
         if os.path.exists(OUTPUT_SAVE_PATH):
-            
-            json_results = []
-            import json
-            data = json.load(open("/data/ossowski/COCO2017/annotations/instances_val2017.json"))
-            coco_eval_mapping = {c['name']:c['id'] for c in data['categories']}
-            
             with open(OUTPUT_SAVE_PATH, "rb") as f:
-                data = pickle.load(f)
+                predictions = pickle.load(f)
             if config["task"] == "object_classification":
-
-                class_names = sorted(dataset.class_counts.keys())
-                mapping = {class_names[i]:i for i in range(len(class_names))}
-                gt = []
-                predictions = []
-                #scores = []
-                class_amounts = {}
-                class_correct = {}
-                mistakes = {}
-                for key in data:
-                    #print(data[key])
-                    answer = data[key]["answer"]
-                    prediction = data[key]["prediction"]
-
-                    #scores.append(data[key]["confidence"])
-                    bbox = dataset.entries[key]['bbox']
-                    #print(bbox)
-                    d = {}
-                    d["image_id"] = int(dataset.entries[key]['id'])
-                    d["category_id"] = coco_eval_mapping.get(prediction, 0)
-                    d['score'] = 0.99
-                    d['bbox'] = dataset.entries[key]['bbox']
-
-                    json_results.append(d)
-                    gt.append(mapping[answer])
-                    predictions.append(mapping.get(prediction, 0))
-                    if answer not in class_amounts:
-                        class_amounts[answer] = 0
-                        class_correct[answer] = 0
-                        mistakes[answer] = {}
-
-
-                    if answer.lower() ==  prediction.lower():
-                        correct += 1
-                        class_correct[answer] += 1
-                    else:
-                        if prediction not in mistakes[answer]:
-                            mistakes[answer][prediction] = 0
-                        mistakes[answer][prediction] += 1
-                    class_amounts[answer] += 1
-                    total += 1
-                
-            out_file = open("/data/ossowski/cocoapi/results/test.json", "w") 
-            json.dump(json_results, out_file) 
-            print(f"Performance")
-            print(f"Overall Accuracy {correct / total:.3}")
-            top_5_frequent_classes = sorted(class_amounts, key = lambda x: class_amounts[x], reverse=True)
-            print(f"Top 5 Class Performance")
-            for i, c in enumerate(top_5_frequent_classes):
-                percentage = class_amounts[c] / sum(class_amounts.values())
-                performance = class_correct[c] / class_amounts[c]
-                most_common_mistake = sorted(mistakes[c].keys(), key = lambda x:mistakes[c][x], reverse=True)[0]
-                print(f"{c}: {round(performance, 3)}")
-                #print(f"'{c}' class which is {percentage * 100:.3}% of data: {performance:.2}. Most common mistake is {most_common_mistake}") 
-            print(f"Overall Accuracy {correct / total:.3}")
+                eval_object_classification(dataset, predictions)
+            elif config["task"] == "refCOCOg":
+                eval_captioning(dataset, predictions)
+            
 
             exit()
 
@@ -247,7 +199,8 @@ def main(args):
         train_loader = DataLoader(dataset, 1, shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
 
         responses = {}
-
+        correct = 0
+        total = 0
         with torch.no_grad():
             for i, batch in enumerate(tqdm(train_loader)):
                 masks = batch["vit_mask"]
@@ -262,8 +215,12 @@ def main(args):
                 answers = batch['answer']
                 image = batch['path_to_image']
        
-                output = model.generate(masks, image.copy(), questions)
+                output = model.generate(masks, image.copy(), questions, b_num = i)
                 output = output.lower().lstrip().rstrip().replace(".", "")
+
+                if output == answers[0]:
+                    correct += 1
+                total += 1
                     
                 responses[i] = {}
                 responses[i]["path_to_image"] = batch["path_to_image"][0]
@@ -275,6 +232,7 @@ def main(args):
                 #responses[i]["confidence"] = confidence.item()
 
                 print(responses[i])
+                print(correct/total)
 
         with open(OUTPUT_SAVE_PATH, "wb") as f:
             print(f"Saved model outputs to {OUTPUT_SAVE_PATH}")

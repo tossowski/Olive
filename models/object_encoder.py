@@ -85,11 +85,15 @@ class ObjectEncoder(nn.Module):
     # Returns (batch_size, hidden dimension tensor) (representation of object)
     # Which can be inserted directly into the embedding space of LLM
     def forward(self, segmentations, image_features):
-        transformer_output = image_features
+        #print(image_features.shape)
         lengths = torch.sum(segmentations, axis = 1).to(self.config["device"])
         max_length = max(lengths)
         attention_mask = torch.arange(max_length).to(self.config["device"])[None, :] < lengths[:, None]
-        test = [transformer_output[i][segmentations[i]] for i in range(transformer_output.shape[0])]
+        #print(image_features.shape)
+        #print(lengths)
+        #print(max_length)
+        #print(attention_mask)
+        test = [image_features[i][segmentations[i]] for i in range(image_features.shape[0])]
         features = pad_sequence(test, batch_first=True)
         #out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]
         out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]

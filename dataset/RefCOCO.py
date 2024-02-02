@@ -12,20 +12,19 @@ import random
 class RefCOCODataset(Dataset):
     # Path to instances.json
     # Path to COCO2014/COCO2017 train images
-    def __init__(self, data_root, train_image_path, split='train'):
+    def __init__(self, data_root, train_image_path, patch_size=16, split='train'):
         super(RefCOCODataset, self).__init__()
         self.data = json.load(open(os.path.join(data_root, "instances.json") , "r"))
+        self.patch_size = patch_size
         self.ref_data = pickle.load(open(os.path.join(data_root, "refs(google).p"), "rb"))
         self.image_path = train_image_path
-        self.prompts = ["[obj] Describe this image region in detail",
+        self.prompts = ["[obj] Briefly describe this image region",
                         "[obj] Describe this part of the image.",
-                        "[obj] What's going on in this area of the image?",
                         "[obj] Share some details about what's happening here in the image.",
                         "[obj] Break down what you see in this particular part of the picture.",
                         "[obj] Fill me in on the details of this section in the picture.",
                         "[obj] Describe what you notice in this area of the picture."]
         self.split = split
-        print(self.split)
         self.image_dict = {}
         for image in self.data['images']:
             self.image_dict[image['id']] = image
@@ -39,13 +38,13 @@ class RefCOCODataset(Dataset):
 
     def _get_ViT_mask(self, segmentation, height, width):
         
-        output_width, output_height = 16, 16
+        output_width, output_height = self.patch_size, self.patch_size
         rles = mask.frPyObjects(segmentation, height, width)
         rle = mask.merge(rles)
         m =  mask.decode(rle).astype(bool)
 
         rle['counts'] = rle['counts'].decode('ascii')
-        pooled_mask = skimage.measure.block_reduce(m, block_size=(math.floor(height / 16), math.floor(width / 16)), func=np.max)
+        pooled_mask = skimage.measure.block_reduce(m, block_size=(math.floor(height / self.patch_size), math.floor(width / self.patch_size)), func=np.max)
 
 
         result_height, result_width = pooled_mask.shape
@@ -81,10 +80,8 @@ class RefCOCODataset(Dataset):
             height = image_info['height']
             width = image_info['width']
 
-            
-
             vit_mask = self._get_ViT_mask(segmentation, height, width)
-
+            sample_info['original_segmentation'] = segmentation
             sample_info['vit_mask'] = np.append(1, vit_mask.flatten())
             sample_info['id'] = image_id
             sample_info['label'] = label
@@ -106,8 +103,10 @@ class RefCOCODataset(Dataset):
             'path_to_image': [item["path_to_image"] for item in batch],
             'question': [item["question"] for item in batch],
             'vit_mask': [item["vit_mask"] for item in batch],
+            'bbox': [item["bbox"] for item in batch],
             "answer":  [item["answer"] for item in batch],
-            "refs": [item["refs"] for item in batch]
+            "refs": [item["refs"] for item in batch],
+            "original_segmentation":  [item["original_segmentation"] for item in batch]
         }
 
     def stats(self):

@@ -1,5 +1,6 @@
 import json
 import os
+import torch
 import numpy as np
 import pycocotools.mask as mask
 import math
@@ -13,7 +14,7 @@ from tqdm import tqdm
 class LVISDataset(Dataset):
     # Path to instances.json
     # Path to COCO2014/COCO2017 train images
-    def __init__(self, split="train", patch_size=16):
+    def __init__(self, config, split="train", patch_size=16):
         super(LVISDataset, self).__init__()
         self.split = split
         self.grid_size=patch_size
@@ -21,6 +22,17 @@ class LVISDataset(Dataset):
         dataset_path = f"/data/ossowski/COCO2017/LVIS/{split}/lvis_v1_{split}.json"
         self.data = json.load(open(dataset_path))
         self.entries = self._load_dataset()
+
+        if config["use_retrieval"]:
+            if config["crop_image"]:
+                cropped = "cropped_"
+            else:
+                cropped = ""
+            CACHE_PATH = f'cache/{config["task"]}/retrieval_cache_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
+            if os.path.exists(CACHE_PATH):
+                with open(CACHE_PATH, 'rb') as f:
+                    self.cache = pickle.load(f)
+                    print(f"Loaded cached retrieval similarity from {CACHE_PATH}")
 
     def _get_ViT_mask(self, segmentation, height, width):
         
@@ -31,7 +43,7 @@ class LVISDataset(Dataset):
         
 
         rle['counts'] = rle['counts'].decode('ascii')
-        pooled_mask = skimage.measure.block_reduce(m, block_size=(math.floor(height / 16), math.floor(width / 16)), func=np.max)
+        pooled_mask = skimage.measure.block_reduce(m, block_size=(math.floor(height / self.grid_size), math.floor(width / self.grid_size)), func=np.max)
         # if (np.sum(pooled_mask, axis=None) == 0):
         #     print(m.shape)
         #     print(np.sum(m, axis = None))
@@ -57,6 +69,27 @@ class LVISDataset(Dataset):
         assert pooled_mask.shape == (output_height,output_width)
         return pooled_mask
     
+    # Should take in argument k: how many closest objects to retrieve
+    # and object features: the ViT features of query objects
+    # Return: The k closest examples from self.entries
+    def retrieve_closest(self, object_features, k, train_phase = True, b_num=0):
+
+        if self.cache != None:
+            most_relevant = self.cache[b_num][:k]
+            similarity_scores = [[round(x[1], 2) for x in most_relevant]]
+            retrieved_info = [[self.entries[x[0]] for x in most_relevant]]
+        else:
+            dist_matrix = (object_features @ self.retrieval_keys.T)
+            if train_phase:
+                closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 1:1+k]
+            else:
+                closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 0:k]
+                similarity_scores = [[round(dist_matrix[i, x].item(), 2) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
+
+                retrieved_info = [[self.entries[x] for x in closest_indices[i,:]] for i in range(len(closest_indices))]
+        return retrieved_info, similarity_scores
+        
+
     def _load_dataset(self):
 
         CLASSES = [
@@ -304,7 +337,6 @@ class LVISDataset(Dataset):
         entries = []
         skipped = 0
         for ann in tqdm(self.data['annotations']):
-
             label = classes[ann['category_id'] - 1]
             extension = str(ann['image_id']).zfill(12) + ".jpg"
             path_to_image = os.path.join(f"/data/ossowski/COCO2017/{self.split}/data/", extension)
@@ -312,13 +344,20 @@ class LVISDataset(Dataset):
                 path_to_image = os.path.join(f"/data/ossowski/COCO2017/train/data/", extension)
             image = Image.open(path_to_image)
             seg = np.append(1, self._get_ViT_mask(ann['segmentation'], image.height, image.width).flatten())
+            rles = mask.frPyObjects(ann['segmentation'], image.height, image.width)
+            rle = mask.merge(rles)
             if sum(seg[1:]) == 0:
                 skipped += 1
                 continue
             if label not in self.class_counts:
                 self.class_counts[label] = 0
             self.class_counts[label] += 1
-            entries.append({"id": ann["id"], "path_to_image": path_to_image, "question": "[obj] What is this?", "vit_mask": seg, "answer": label})
+            entries.append({"id": ann["id"], 
+                            "path_to_image": path_to_image, 
+                            "question": "[obj] What is this?", 
+                            "vit_mask": seg, "answer": label, 
+                            "original_segmentation": rle, 
+                            'bbox':ann['bbox']})
 
         print(f"Skipped {skipped} entries")
         return entries
@@ -329,7 +368,9 @@ class LVISDataset(Dataset):
             'path_to_image': [item["path_to_image"] for item in batch],
             'question': [item["question"] for item in batch],
             'vit_mask': [item["vit_mask"] for item in batch],
-            "answer":  [item["answer"] for item in batch]
+            "answer":  [item["answer"] for item in batch],
+            "original_segmentation":  [item["original_segmentation"] for item in batch],
+            'bbox': [item["bbox"] for item in batch]
         }
 
     def eval_correctness(self, prediction, answer):

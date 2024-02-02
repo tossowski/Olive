@@ -9,7 +9,7 @@ import numpy as np
 
 from PIL import Image
 from io import BytesIO
-from transformers import AutoModelForCausalLM, LlamaTokenizer, CLIPImageProcessor, AutoTokenizer, AutoProcessor, LlavaForConditionalGeneration
+from transformers import AutoModelForCausalLM, LlamaTokenizer, CLIPImageProcessor, AutoTokenizer, AutoProcessor, LlavaForConditionalGeneration, AutoImageProcessor, AutoModel
 
 from models.object_encoder import ObjectEncoder
 #from peft import PeftModel, LoraConfig, prepare_model_for_kbit_training, get_peft_model
@@ -68,12 +68,12 @@ class VisionLLaMA(nn.Module):
             processor = AutoProcessor.from_pretrained("llava-hf/llava-1.5-7b-hf")
             self.tokenizer = processor.tokenizer
             self.image_processor = processor.image_processor
-            self.object_encoder.projector  = self.llama_model.multi_modal_projector
+            self.object_encoder.projector = self.llama_model.multi_modal_projector
             self.object_encoder.processor = self.image_processor
             self.object_encoder.model = self.llama_model.vision_tower
             self.object_encoder.projector.requires_grad_(False)
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-            self.tokenizer.padding_size = "left"
+            self.tokenizer.padding_side = "right"
             assert self.config["patch_size"] == 24
         
         # Add special token for object
@@ -94,20 +94,24 @@ class VisionLLaMA(nn.Module):
         self.obj_token_id = self.tokenizer.convert_tokens_to_ids("[obj]")
         self.pad_token_id = self.tokenizer.convert_tokens_to_ids("[PAD]")
 
+        print(f"Initialized model with {self.config['llm_model']} LLM backbone and {self.config['vision_encoder']} Vision Encoder")
+        print(f"It has {self.count_trainable_parameters()} trainable parameters")
+
         if self.config["freeze_llm"]:
+            print("The LLM is FROZEN")
             self.llama_model.requires_grad_(False)
             # if "gpt2" in base_model:
             #     self.llama_model.lm_head.requires_grad_(True)
 
-        print(f"Initialized model with {self.config['llm_model']} LLM backbone and {self.config['vision_encoder']} Vision Encoder")
-        print(f"It has {self.count_trainable_parameters()} trainable parameters")
+        #print(f"It has {self.count_trainable_parameters()} trainable parameters")
 
     def prepare_for_training(self):
+        return
         if not self.config["freeze_llm"]:
             peft_config = LoraConfig(
-                lora_alpha=16,
+                lora_alpha=256,
                 lora_dropout=0.1,
-                r=64,
+                r=128,
                 bias="none",
                 task_type="CAUSAL_LM", 
             )
@@ -125,7 +129,8 @@ class VisionLLaMA(nn.Module):
         attention_mask = torch.tensor(tokenizer_output.attention_mask, dtype=torch.long).to(self.config["device"])
         batch_tokens = torch.tensor(tokenizer_output.input_ids, dtype=torch.long).to(self.config["device"])
 
-        if "llava" in self.config["llm_model"]:
+        if len(image_features) > 0:
+            image_features = torch.cat(image_features, dim = 0).to(self.config["device"])
             input_ids = torch.tensor(self.tokenizer(sentences, padding=True).input_ids, dtype=torch.long).to(self.config["device"])
             #pixel_values = self.image_processor([image[0] for image in images], return_tensors='pt')['pixel_values']
             inputs_embeds = self.llama_model.get_input_embeddings()(input_ids).to(self.config["device"])
@@ -135,7 +140,7 @@ class VisionLLaMA(nn.Module):
                 image_features, inputs_embeds, input_ids, attention_mask, input_ids
             )
 
-            batch_tokens[:, 1:578] = 1 # We will override this with the image features later. Otherwise this causes an embedding lookup error because it is filled with -100
+            batch_tokens[:, 1:(self.config["patch_size"] ** 2) + 2] = 1 # We will override this with the image features later. Otherwise this causes an embedding lookup error because it is filled with -100
             # Just need to make sure to reset it later
 
             inputs_embeds = inputs_embeds.to(self.config["device"])
@@ -144,15 +149,15 @@ class VisionLLaMA(nn.Module):
             if labels is not None:
                 labels = batch_tokens
 
-            final_image_input = inputs_embeds[:, 1:578, :]
+            final_image_input = inputs_embeds[:, 1:(self.config["patch_size"] ** 2) + 2, :]
 
         
 
         embed_layer = self.llama_model.get_input_embeddings().to(self.config["device"])
 
         if len(special_values) == 0:
-            if "llava" in self.config["llm_model"]:
-                batch_tokens[:, 1:578] = -100
+            if self.config["use_image_features"]:
+                batch_tokens[:, 1:(self.config["patch_size"] ** 2) + 2] = -100
                 return inputs_embeds, batch_tokens, attention_mask.to(self.config["device"])
             input_embeds = embed_layer(batch_tokens).to(self.config["device"])
             
@@ -218,8 +223,8 @@ class VisionLLaMA(nn.Module):
             if labels is not None:
                 cur_new_labels = torch.cat(cur_new_labels, dim=0)
 
-                if "llava" in self.config["llm_model"]:
-                    cur_new_labels[1:578] = -100
+                if self.config["use_image_features"]:
+                    cur_new_labels[1:(self.config["patch_size"] ** 2) + 2] = -100
                 new_labels.append(cur_new_labels)
             
         
@@ -228,23 +233,27 @@ class VisionLLaMA(nn.Module):
         if labels is not None:
             new_labels  = torch.stack(new_labels, dim=0).to(self.config["device"])
 
-        if "llava" in self.config["llm_model"]:
-            new_input_embeds[:, 1:578, :] = final_image_input
+        if self.config["use_image_features"]:
+            new_input_embeds[:, 1:(self.config["patch_size"] ** 2) + 2, :] = final_image_input
  
-        if image_features != None and "llava" not in self.config["llm_model"]:
-            n_patches = 1 + self.config["patch_size"] ** 2
-            new_input_embeds = torch.cat((image_features, new_input_embeds), axis = 1)
-            new_labels = torch.cat((-100 * torch.ones((self.config["batch_size"], n_patches), dtype=torch.long).to(self.config["device"]), new_labels), axis = 1)
-            new_attn_mask = torch.cat((torch.ones((self.config["batch_size"], n_patches), dtype=torch.long).to(self.config["device"]), new_attn_mask), axis = 1)
-
+        # if len(image_features) > 0:
+        #     image_features = torch.cat(image_features, axis = 0).to(self.config["device"])
+        #     n_patches = 1 + self.config["patch_size"] ** 2
+        #     new_input_embeds = torch.cat((image_features, new_input_embeds), axis = 1)
+        #     new_labels = torch.cat((-100 * torch.ones((self.config["batch_size"], n_patches), dtype=torch.long).to(self.config["device"]), new_labels), axis = 1)
+        #     new_attn_mask = torch.cat((torch.ones((self.config["batch_size"], n_patches), dtype=torch.long).to(self.config["device"]), new_attn_mask), axis = 1)
+        
+        #print(new_input_embeds.shape, new_labels.shape, new_attn_mask.shape)
         return new_input_embeds.to(self.config["device"]), new_labels, new_attn_mask.to(self.config["device"])
 
-    def prepare_input(self, segmentations, images, sentences, labels=None, return_retrieved_info = False):
+    def prepare_input(self, segmentations, images, sentences, labels=None, return_retrieved_info = False, b_num=0, cropped_images=[]):
  
-        if self.config["use_retrieval"]:
-
-            prompts, retrieved_masks, retrieved_images = self.get_retrieval_prompt(segmentations, images)
-            new_segs = [segmentations[i, :] for i in range(len(segmentations))]
+        if self.config["use_retrieval"] and len(segmentations) > 0:
+            if self.config["crop_image"]:
+                prompts, retrieved_masks, retrieved_images = self.get_retrieval_prompt(segmentations, images, b_num=b_num, cropped_images=cropped_images)
+            else:
+                prompts, retrieved_masks, retrieved_images = self.get_retrieval_prompt(segmentations, images, b_num=b_num)
+            new_segs = [segmentations[i] for i in range(len(segmentations))]
 
             for i in range(len(prompts)):
                 if "[obj]" not in sentences[i]:
@@ -262,16 +271,13 @@ class VisionLLaMA(nn.Module):
                 else:
                     images[i] = retrieved_images[i] + [images[i]]
             segmentations = new_segs
+        
         for i in range(len(images)):
             if type(images[i]) == list:
                 images[i] = [self.load_image(x) for x in images[i]]
             else:
                 images[i] = [self.load_image(images[i])]
 
-
-        # for i in range(len(segmentations)):
-        #     segmentations[i] = torch.BoolTensor(segmentations[i]).to(self.config["device"])
-           
         if labels == None:
             if "llama" in self.config["llm_model"]:
                 labels = [" [/INST] [start]" for sent in sentences]
@@ -291,13 +297,12 @@ class VisionLLaMA(nn.Module):
         full_text_input = [self.prompt_text + sentences[i] + labels[i] for i in range(len(sentences))]
         object_embeddings = []
         image_features = []
-
         if len(segmentations) > 0:
-            for i in range(len(images)):
+            for i in range(len(segmentations)):
                 inputs = self.object_encoder.processor(images=images[i], return_tensors="pt").to(self.config["device"])
-
                 transformer_output = self.object_encoder.model(**inputs).last_hidden_state
-                image_features.append(transformer_output)
+                if self.config["use_image_features"]:
+                    image_features.append(self.llama_model.multi_modal_projector(transformer_output))
 
                 mask_input = segmentations[i]
                 if len(mask_input.shape) == 1:
@@ -309,63 +314,62 @@ class VisionLLaMA(nn.Module):
 
                 object_embedding = self.object_encoder(mask_input, transformer_output)
                 object_embeddings.append(object_embedding)
-        # else:
-            #print(full_segmentations)
-            # full_segmentations = [self.resize_tensor(x.unsqueeze(0).unsqueeze(0), (224,224)) for x in full_segmentations]
-            # for seg in full_segmentations:
-            #     x = self.act1(self.conv1(seg))
-            #     x = self.drop1(x)
-            #     x = self.pool2(x)
-            #     x = self.flat(x)
-            #     object_embeddings.append(self.fc3(x))
-            #object_embeddings = torch.stack(object_embeddings, axis = 0)
-           # print(object_embeddings.shape)
-            
-
-
+        elif self.config["use_image_features"] and len(images) > 0:
+            inputs = self.object_encoder.processor(images=images[i], return_tensors="pt").to(self.config["device"])
+            transformer_output = self.object_encoder.model(**inputs).last_hidden_state
+            image_features.append(self.llama_model.multi_modal_projector(transformer_output))
+ 
         labels = torch.tensor(self.tokenizer(full_text_input, padding=True).input_ids, dtype=torch.long).to(self.config["device"])
-        if self.config["use_image_features"] or "llava" in self.config["llm_model"]:
-            #print(len(image_features))
-            #print(image_features[0].shape)
-            image_features = torch.cat(image_features, 0).to(self.config["device"])
-            image_features = self.object_encoder.projector(image_features)
-            #print(image_features.shape)
-            final_input, label_input, attention_mask = self.embed_with_special_tokens(full_text_input, object_embeddings, image_features=image_features, labels=labels)
-        else:
-            final_input, label_input, attention_mask = self.embed_with_special_tokens(full_text_input, object_embeddings, labels=labels)
+        final_input, label_input, attention_mask = self.embed_with_special_tokens(full_text_input, object_embeddings, labels=labels, image_features=image_features)
         
         if return_retrieved_info:
             return final_input, label_input, attention_mask, prompts, retrieved_masks, retrieved_images
         return final_input, label_input, attention_mask
 
-    def get_retrieval_prompt(self, mask, images):
-       
-        inputs = self.object_encoder.processor(images=[self.load_image(x) for x in images], return_tensors="pt").to(self.config["device"])
-            
-        image_forward_outs = self.object_encoder.model(inputs['pixel_values'], output_hidden_states=True)
-
-        if type(mask) == list:
-            mask = torch.stack(mask, axis = 0)[:, 1:]
-        else:
-            mask = mask[:, 1:]
+    def get_retrieval_prompt(self, mask, images, b_num = 0, cropped_images = []):
         object_features = []
-        for i in range(len(mask)):
-            image_feat = image_forward_outs.hidden_states[-1][i,1:,:][mask[i]].detach().cpu()
-            object_feature = torch.mean(image_feat, dim = 0)
+
+        if len(cropped_images) > 0:
+            # processor = AutoImageProcessor.from_pretrained('facebook/dinov2-large')
+            # model = AutoModel.from_pretrained('facebook/dinov2-large').to(self.config["device"])
+            # model.eval()
+
+            inputs = self.object_encoder.processor(images=[self.load_image(x) for x in cropped_images], return_tensors="pt").to(self.config["device"])
+            image_forward_outs = self.object_encoder.model(inputs['pixel_values'], output_hidden_states=True)
+            object_feature = image_forward_outs.hidden_states[-1][0,0,:]
             object_feature /= object_feature.norm(dim=-1, keepdim=True)
             object_features.append(object_feature)
+        else:
+            inputs = self.object_encoder.processor(images=[self.load_image(x) for x in images], return_tensors="pt").to(self.config["device"])
+            
+            image_forward_outs = self.object_encoder.model(inputs['pixel_values'], output_hidden_states=True)
+
+            if type(mask) == list:
+                mask = torch.stack(mask, axis = 0)[:, 1:]
+            else:
+                mask = mask[:, 1:]
+
+            object_features = []
+            for i in range(len(mask)):
+                image_feat = image_forward_outs.hidden_states[-1][i,1:,:][mask[i]].detach().cpu()
+                object_feature = torch.mean(image_feat, dim = 0)
+                object_feature /= object_feature.norm(dim=-1, keepdim=True)
+                object_features.append(object_feature)
+                
         object_features = torch.stack(object_features, axis = 0)
-        closest_entries, similarity_scores = self.retrieval_fn(object_features)
+        closest_entries, similarity_scores = self.retrieval_fn(object_features, b_num)
         prompts = []
         masks = []
         all_images = []
+        #print(closest_entries, similarity_scores)
         for i in range(len(closest_entries)):
             prompt = f"The top {self.config['retrieval_k']} related objects are:\n"
             entries = closest_entries[i]
             images = []
             segmentations = []
             for x, entry in enumerate(entries):
-                prompt += f"[obj] {entry['answer']} with confidence {similarity_scores[i][x]}\n"
+                
+                prompt += f"[obj] {entry['answer']} with confidence {similarity_scores[i][x]:.2}\n"
                 segmentations.append(torch.BoolTensor(entry["vit_mask"]).to(self.config["device"]))
                 images.append(entry["path_to_image"])
             prompt += "\n"
@@ -398,15 +402,15 @@ class VisionLLaMA(nn.Module):
 
     
 
-    def generate(self, segmentations, images, sentences, return_retrieved_info=False):
+    def generate(self, segmentations, images, sentences, return_retrieved_info=False, b_num = 0, cropped_images = []):
 
         if return_retrieved_info:
-            final_input, label_input, attention_mask, prompts, masks, images = self.prepare_input(segmentations, images, sentences, labels=None, return_retrieved_info=True)
+            final_input, label_input, attention_mask, prompts, masks, images = self.prepare_input(segmentations, images, sentences, labels=None, return_retrieved_info=True, b_num=b_num, cropped_images = cropped_images)
         else:
-            final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels=None)
+            final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels=None, b_num=b_num)
         
-        out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30, top_p=0.0, top_k=1)
-        #out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30)
+        #out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30, top_p=0.0, top_k=1)
+        out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30, temperature=1)
 
  
         decoded_output = self.tokenizer.batch_decode(out, skip_special_tokens=True)
@@ -420,7 +424,11 @@ class VisionLLaMA(nn.Module):
 
         return decoded_output
 
-    def _get_save_path(self):
+    def _get_save_path(self, load_raw=False):
+
+        if self.config["load_model_path"] and not load_raw:
+            return self.config["load_model_path"]
+
         SAVE_PATH = ""
         if self.config["freeze_llm"]:
             SAVE_PATH += "frozen_llm_"
@@ -443,10 +451,9 @@ class VisionLLaMA(nn.Module):
             SAVE_PATH += f"{n_layers}_decoder_layers_"
 
         if self.config["use_retrieval"]:
-            SAVE_PATH += "retrieval_"
-        
-        if self.config["use_image_features"]:
-            SAVE_PATH += "with_img_features_"
+            SAVE_PATH += "retrieval_"        
+        # if self.config["use_image_features"]:
+        #     SAVE_PATH += "with_img_features_"
 
         if self.config["task"] == "image_captioning":
             if self.config["use_object_annotations"]:

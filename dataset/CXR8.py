@@ -7,22 +7,22 @@ import torch
 import skimage
 import pickle
 import random
+from PIL import Image
 from tqdm import tqdm
 from torch.utils.data import Dataset
+import pandas as pd
 
 
-class COCOObjectDataset(Dataset):
+class CXR8Dataset(Dataset):
     # Path to instances.json
     # Path to COCO2014/COCO2017 train images
-    def __init__(self, config, split="train", patch_size=16, max_examples_per_class = 1000000):
-        super(COCOObjectDataset, self).__init__()
-        dataset_path = f"/data/ossowski/COCO2017/instruction_data/supervised_with_segmentations_{split}_object_detection_{patch_size}x{patch_size}.json"
+    def __init__(self, config, split="train", patch_size=16):
+        super(CXR8Dataset, self).__init__()
         self.config = config
-        self.data = json.load(open(dataset_path))
-        self.prompts = ["[obj] What is this? Answer as short as possible.",
-                        "[obj] What is this object? Answer as short as possible."]
+
+        self.split=split
         self.patch_size = patch_size
-        self.max_examples_per_class = max_examples_per_class
+        
         self.class_counts = {}
         self.entries = self._load_dataset()
 
@@ -44,39 +44,66 @@ class COCOObjectDataset(Dataset):
                 assert len(self.retrieval_keys) == len(self.retrieval_labels)
                 print(f'Loaded {len(self.retrieval_keys)} examples from {retrieval_path}.pkl')
     
+    def _get_ViT_mask(self, bbox, height, width):
+        arr = np.zeros((self.patch_size, self.patch_size))
+        x_min, y_min, w, h = bbox
+        y_max = y_min + h
+        x_max = x_min + w
+        height_bins = np.linspace(0, height, 16)
+        width_bins = np.linspace(0, width, 16)
+        x_min, x_max = np.digitize(np.array([x_min, x_max]), width_bins)
+        y_min, y_max = np.digitize(np.array([y_min, y_max]), height_bins)
+        arr[y_min:y_max, x_min:x_max] = 1
+
+        return np.append(1, arr.flatten())
+
     def _load_dataset(self):
 
-        entries = []
-        bad_segs = 0
-        for item in tqdm(self.data):
-            segmentations = item["segmentations"]
-            bboxes = item["bboxes"]
-            segmentation_labels = item["segmentation_labels"]
-            full_segmentations = item["original_segmentations"]
+        entries = None
+        bbox_info = pd.read_csv("/data/ossowski/CXR8/BBox_List_2017.csv")
+        train_images = set()
+        test_images = set()
+        with open("/data/ossowski/CXR8/test_list.txt", "r") as f:
+            for line in f:
+                test_images.add(line.strip())
+        with open("/data/ossowski/CXR8/train_val_list.txt", "r") as f:
+            for line in f:
+                train_images.add(line.strip())
 
-            chunk = []
+        final_train = []
+        final_test = []
+        pathology_totals = bbox_info['Finding Label'].value_counts() // 5
+        cur_path_count = {}
+        for i in range(len(bbox_info)):
+            pathology = bbox_info.loc[i, "Finding Label"]
+            if pathology not in cur_path_count:
+                cur_path_count[pathology] = 0
             
-            for i, segmentation in enumerate(segmentations):
-                bbox = bboxes[i]
-                #insert = 1 if self.config["use_CLS_emb"] else 0
-                insert = 1
-                seg = np.append(insert, mask.decode(segmentation).flatten())
-                if sum(seg[1:]) == 0:
-                    bad_segs += 1
-                    continue
-                original_seg = full_segmentations[i]
-                label = segmentation_labels[i]
-                if label.isnumeric():
-                    continue
-                if label not in self.class_counts:
-                    self.class_counts[label] = 0
-                if self.class_counts[label] == self.max_examples_per_class:
-                    continue
-                self.class_counts[label] += 1
-                chunk.append({"id": item["id"], "path_to_image": item["image"], "question": "[obj] What is this?", "vit_mask": seg, "answer": label, "original_segmentation": original_seg, 'bbox':bbox})
-            entries.extend(chunk)
-        print(f"Skipped over {bad_segs} bad segmentations (no pixels)")
-        return entries
+            if cur_path_count[pathology] <= pathology_totals[pathology]:
+                final_train.append(bbox_info.loc[i, :])
+            else:
+                final_test.append(bbox_info.loc[i, :])
+            cur_path_count[pathology] += 1
+
+        if self.split == "train":
+            entries = final_train
+        elif self.split == "test":
+            entries = final_test
+
+        final_entries = []
+        for entry in entries:
+            new_entry = {}
+            new_entry["id"] = entry['Image Index'][:-4]
+            new_entry["path_to_image"] = os.path.join("/data/ossowski/CXR8/images", entry['Image Index'])
+            new_entry["answer"] = entry["Finding Label"]
+            new_entry["bbox"] = [int(entry["Bbox [x"]), int(entry["y"]), int(entry["w"]), int(entry["h]"])]
+            image = Image.open(new_entry["path_to_image"])
+            new_entry["vit_mask"] = self._get_ViT_mask(new_entry["bbox"], image.height, image.width)
+            new_entry["original_segmentation"] = None
+            new_entry["question"] = "[obj] What is this?"
+            final_entries.append(new_entry)
+        #print(f"Skipped over {bad_segs} bad segmentations (no pixels)")
+        return final_entries
 
     def collate_fn(self, batch):
         return {
@@ -89,12 +116,6 @@ class COCOObjectDataset(Dataset):
             "original_segmentation":  [item["original_segmentation"] for item in batch]
         }
 
-    def eval_correctness(self, prediction, answer):
-        correct = 1 if prediction == answer else 0
-        score_dict = {}
-        score_dict["score"] = correct
-        return  score_dict
-    
     def get_entry_by_id(self, id):
         for entry in self.entries:
             if entry['id'] == id:
@@ -139,7 +160,7 @@ class COCOObjectDataset(Dataset):
 
 
     def __str__(self):
-        return f"ObjectCOCO dataset with {len(self.entries)} questions"
+        return f"CXR8 dataset with {len(self.entries)} questions"
 
 
     def __len__(self):

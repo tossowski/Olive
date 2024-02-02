@@ -18,15 +18,15 @@ class VRPDataset(Dataset):
         self.patch_size = patch_size
         self.use_object_annotations = use_object_annotations
         self.object_prompts = ["Describe the image.",
-                        "Explain the image with these objects.",
-                        "Using these objects, describe the image.",
-                        "Describe the image using these things.",
-                        "Tell me about the image with the help of these objects.",
-                        "Use these things to paint a picture of what you see.",
-                        "Break down the image with these specified objects.",
-                        "Use these things to describe the image.",
-                        "Spell out the image using these specific items.",
-                        "Share your thoughts on the picture using these things."]
+                                "Explain the image with these objects.",
+                                "Using these objects, describe the image.",
+                                "Describe the image using these things.",
+                                "Tell me about the image with the help of these objects.",
+                                "Use these things to paint a picture of what you see.",
+                                "Break down the image with these specified objects.",
+                                "Use these things to describe the image.",
+                                "Spell out the image using these specific items.",
+                                "Share your thoughts on the picture using these things."]
         if split in ["train", "val"]:
             dataset_path = f"/data/ossowski/COCO2017/instruction_data/supervised_with_segmentations_{split}_object_detection_{patch_size}x{patch_size}.json"
             self.data = json.load(open(dataset_path))
@@ -53,7 +53,7 @@ class VRPDataset(Dataset):
         if split in ["train", "val"]:
             
             for item in self.data:
-
+                bboxes = item["bboxes"]
                 segmentations = item["segmentations"]
                 
                 if len(segmentations) <= 1:
@@ -66,7 +66,7 @@ class VRPDataset(Dataset):
 
                 # Old code assuming ground truth masks
                 if self.use_object_annotations:
-                    vit_masks = [np.append(mask.decode(seg).flatten(), 1) for seg in segmentations]
+                    vit_masks = [np.append(1, mask.decode(seg).flatten()) for seg in segmentations]
                     vit_masks = np.stack(vit_masks, axis = 0)
                     question = "[obj] " * len(segmentation_labels) + random.choice(self.object_prompts)
 
@@ -85,7 +85,7 @@ class VRPDataset(Dataset):
                 # Old code assuming ground truth masks
                 #entry = {"path_to_image": item["image"], "question": "[obj] " * len(segmentation_labels) + "Describe the image using these objects.", "vit_mask": vit_masks, "answer": caption}
                 
-                entry = {"id": image_id, "path_to_image": item["image"], "question": question, "vit_mask": vit_masks, "answer": caption}
+                entry = {"id": image_id, "path_to_image": item["image"], "question": question, "vit_mask": vit_masks, "answer": caption, "bbox": bboxes}
 
                 entries.append(entry)
         else:
