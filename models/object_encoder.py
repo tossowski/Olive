@@ -28,6 +28,7 @@ class ObjectEncoder(nn.Module):
             "facebook/dino-vitb8": 768,
             "openai/clip-vit-large-patch14": 1024,
             "facebook/dinov2-large": 1024,
+            "openai/clip-vit-large-patch14-336": 1024
         }
         hid_dim = hid_dim_mapping[self.config["vision_encoder"]]
         if "clip" in self.config["vision_encoder"]:

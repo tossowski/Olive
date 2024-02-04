@@ -12,7 +12,7 @@ from io import BytesIO
 from transformers import AutoModelForCausalLM, LlamaTokenizer, CLIPImageProcessor, AutoTokenizer, AutoProcessor, LlavaForConditionalGeneration, AutoImageProcessor, AutoModel
 
 from models.object_encoder import ObjectEncoder
-#from peft import PeftModel, LoraConfig, prepare_model_for_kbit_training, get_peft_model
+from peft import PeftModel, LoraConfig, prepare_model_for_kbit_training, get_peft_model
 
 
 
@@ -95,18 +95,17 @@ class VisionLLaMA(nn.Module):
         self.pad_token_id = self.tokenizer.convert_tokens_to_ids("[PAD]")
 
         print(f"Initialized model with {self.config['llm_model']} LLM backbone and {self.config['vision_encoder']} Vision Encoder")
-        print(f"It has {self.count_trainable_parameters()} trainable parameters")
+        
 
         if self.config["freeze_llm"]:
             print("The LLM is FROZEN")
             self.llama_model.requires_grad_(False)
             # if "gpt2" in base_model:
             #     self.llama_model.lm_head.requires_grad_(True)
-
+        print(f"There are {self.count_trainable_parameters()} trainable parameters")
         #print(f"It has {self.count_trainable_parameters()} trainable parameters")
 
     def prepare_for_training(self):
-        return
         if not self.config["freeze_llm"]:
             peft_config = LoraConfig(
                 lora_alpha=256,
@@ -282,7 +281,7 @@ class VisionLLaMA(nn.Module):
             if "llama" in self.config["llm_model"]:
                 labels = [" [/INST] [start]" for sent in sentences]
             elif "gpt2" in self.config["llm_model"]:
-                labels = [" [start] " for sent in sentences]
+                labels = [" [start]" for sent in sentences]
             elif "llava" in self.config["llm_model"]:
                 labels = ["\nASSISTANT: " for _ in sentences]
         else:
@@ -297,6 +296,7 @@ class VisionLLaMA(nn.Module):
         full_text_input = [self.prompt_text + sentences[i] + labels[i] for i in range(len(sentences))]
         object_embeddings = []
         image_features = []
+   
         if len(segmentations) > 0:
             for i in range(len(segmentations)):
                 inputs = self.object_encoder.processor(images=images[i], return_tensors="pt").to(self.config["device"])
@@ -318,7 +318,7 @@ class VisionLLaMA(nn.Module):
             inputs = self.object_encoder.processor(images=images[i], return_tensors="pt").to(self.config["device"])
             transformer_output = self.object_encoder.model(**inputs).last_hidden_state
             image_features.append(self.llama_model.multi_modal_projector(transformer_output))
- 
+  
         labels = torch.tensor(self.tokenizer(full_text_input, padding=True).input_ids, dtype=torch.long).to(self.config["device"])
         final_input, label_input, attention_mask = self.embed_with_special_tokens(full_text_input, object_embeddings, labels=labels, image_features=image_features)
         
@@ -351,12 +351,12 @@ class VisionLLaMA(nn.Module):
 
             object_features = []
             for i in range(len(mask)):
-                image_feat = image_forward_outs.hidden_states[-1][i,1:,:][mask[i]].detach().cpu()
+                image_feat = image_forward_outs.hidden_states[-1][i,1:,:][mask[i]]
                 object_feature = torch.mean(image_feat, dim = 0)
                 object_feature /= object_feature.norm(dim=-1, keepdim=True)
                 object_features.append(object_feature)
                 
-        object_features = torch.stack(object_features, axis = 0)
+        object_features = torch.stack(object_features, axis = 0).to(self.config["device"])
         closest_entries, similarity_scores = self.retrieval_fn(object_features, b_num)
         prompts = []
         masks = []
@@ -397,7 +397,7 @@ class VisionLLaMA(nn.Module):
             #print(idx)
             label_input[i, :idx + 1] = -100
         #print(label_input)
-    
+
         return self.llama_model(inputs_embeds = final_input, labels = label_input, attention_mask=attention_mask)
 
     
@@ -409,11 +409,13 @@ class VisionLLaMA(nn.Module):
         else:
             final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels=None, b_num=b_num)
         
-        #out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30, top_p=0.0, top_k=1)
-        out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30, temperature=1)
+        out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=100, top_p=0.0, top_k=1)
+        #out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30, temperature=1)
 
  
         decoded_output = self.tokenizer.batch_decode(out, skip_special_tokens=True)
+        #decoded_output = self.tokenizer.batch_decode(out)
+
         if len(decoded_output) == 1:
             decoded_output = decoded_output[0]
 
@@ -441,7 +443,10 @@ class VisionLLaMA(nn.Module):
         if "dino" in self.config["vision_encoder"]:
             SAVE_PATH += "dino_"
         elif "clip" in self.config["vision_encoder"]:
-            SAVE_PATH += "clip_"
+            if "336" in self.config["vision_encoder"]:
+                SAVE_PATH += "clip_336_"
+            else:
+                SAVE_PATH += "clip_"
 
         if self.config["early_stopping"]:
             SAVE_PATH += "early_stopping_"
@@ -484,7 +489,7 @@ class VisionLLaMA(nn.Module):
         print(f"Loaded Object Encoder checkpoint from {SAVE_PATH}")
         if self.config["freeze_llm"]:
             if "gpt2" in self.config["llm_model"]:
-                return
+                #return
                 self.llama_model = AutoModelForCausalLM.from_pretrained(
                     SAVE_PATH).to(self.config["device"])
             return

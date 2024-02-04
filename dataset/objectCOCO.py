@@ -16,7 +16,12 @@ class COCOObjectDataset(Dataset):
     # Path to COCO2014/COCO2017 train images
     def __init__(self, config, split="train", patch_size=16, max_examples_per_class = 1000000):
         super(COCOObjectDataset, self).__init__()
-        dataset_path = f"/data/ossowski/COCO2017/instruction_data/supervised_with_segmentations_{split}_object_detection_{patch_size}x{patch_size}.json"
+        self.split = split
+        if "train" in split:
+            dataset_path = f"/data/ossowski/COCO2017/instruction_data/supervised_with_segmentations_train_object_detection_{patch_size}x{patch_size}.json"
+        else:
+            dataset_path = f"/data/ossowski/COCO2017/instruction_data/supervised_with_segmentations_val_object_detection_{patch_size}x{patch_size}.json"
+
         self.config = config
         self.data = json.load(open(dataset_path))
         self.prompts = ["[obj] What is this? Answer as short as possible.",
@@ -31,6 +36,10 @@ class COCOObjectDataset(Dataset):
                 cropped = "cropped_"
             else:
                 cropped = ""
+
+
+            if "retrieval_set_path" in config:
+                retrieval_path = config["retrieval_set_path"]
             retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
             #retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{config["vision_encoder"].split("/")[-1]}.pkl'
 
@@ -40,7 +49,7 @@ class COCOObjectDataset(Dataset):
                 self.retrieval_data = pickle.load(f)
                 self.retrieval_keys = torch.FloatTensor(self.retrieval_data['keys']).to(self.config["device"])
                 self.retrieval_labels = self.retrieval_data['values']
-                self.retrieval_idx = self.retrieval_data['idx']
+                self.retrieval_idx = self.retrieval_data.get('idx', None)
                 assert len(self.retrieval_keys) == len(self.retrieval_labels)
                 print(f'Loaded {len(self.retrieval_keys)} examples from {retrieval_path}.pkl')
     
@@ -53,17 +62,21 @@ class COCOObjectDataset(Dataset):
             bboxes = item["bboxes"]
             segmentation_labels = item["segmentation_labels"]
             full_segmentations = item["original_segmentations"]
-
+            class_types = item["class_types"]
+                
             chunk = []
             
             for i, segmentation in enumerate(segmentations):
+                if "zeroshot" in self.split:
+                    if "train" in self.split and class_types[i] == "novel":
+                        continue
                 bbox = bboxes[i]
-                #insert = 1 if self.config["use_CLS_emb"] else 0
-                insert = 1
-                seg = np.append(insert, mask.decode(segmentation).flatten())
+                seg = np.append(1, mask.decode(segmentation).flatten())
+
                 if sum(seg[1:]) == 0:
                     bad_segs += 1
                     continue
+
                 original_seg = full_segmentations[i]
                 label = segmentation_labels[i]
                 if label.isnumeric():
@@ -117,24 +130,20 @@ class COCOObjectDataset(Dataset):
     # and object features: the ViT features of query objects
     # Return: The k closest examples from self.entries
     def retrieve_closest(self, object_features, k, train_phase = True, b_num=-1):
-
+ 
         dist_matrix = (object_features @ self.retrieval_keys.T)
-        #print(dist_matrix.shape)
-        #print(len(torch.nonzero(torch.isnan(self.retrieval_keys.view(-1)))))
-
 
         if train_phase:
             closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 1:1+k]
         else:
             closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 0:k]
-        #print(closest_indices)
+
         similarity_scores = [[round(dist_matrix[i, x].item(), 2) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
-        #print([[dist_matrix[i, x] for x in closest_indices[i,:]] for i in range(len(closest_indices))])
-        #print(similarity_scores)
-        retrieved_info = [[self.get_entry_by_id(self.retrieval_idx[x]) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
-
-        print(similarity_scores)
-
+        if self.retrieval_idx:
+            retrieved_info = [[self.entries[self.retrieval_idx[x]] for x in closest_indices[i,:]] for i in range(len(closest_indices))]
+        else:
+            retrieved_info = [[self.entries[x] for x in closest_indices[i,:]] for i in range(len(closest_indices))]
+            
         return retrieved_info, similarity_scores
 
 

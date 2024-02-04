@@ -4,6 +4,7 @@ from dataset.RefCOCO import RefCOCODataset
 from dataset.countCOCO import CountCOCODataset
 from dataset.objectCOCO import COCOObjectDataset
 from dataset.LVIS import LVISDataset
+from dataset.CXR8 import CXR8Dataset
 from dataset.VRP import VRPDataset
 from dataset.visualgenome import VisualGenomeDataset
 from torch.utils.data import DataLoader
@@ -24,12 +25,14 @@ def main(args):
     with open(args.config, 'r') as file:
         config = yaml.safe_load(file)
 
-    
     if args.train:
 
         print("Loading Dataset ...")
         if config['task'] == 'object_classification':
-            dataset = COCOObjectDataset(config, split="val", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
+            dataset = COCOObjectDataset(config, split="train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
+            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+        elif config['task'] == 'zeroshot_object_classification':
+            dataset = COCOObjectDataset(config, split="zeroshot_train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == "open_vocab_object_classification":
             dataset = LVISDataset(config, split="val", patch_size=config['patch_size'])
@@ -44,10 +47,10 @@ def main(args):
             dataset = VisualGenomeDataset(config, split="train", patch_size=config['patch_size'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == "refCOCO":
-            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcoco", "/data/ossowski/COCO2017/train")
+            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcoco", "/data/ossowski/COCO2017/train", patch_size=config["patch_size"])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == "refCOCOg":
-            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", split="train")
+            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", split="train", patch_size=config["patch_size"])
             train_loader = DataLoader(dataset, config["batch_size"],  shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'ALL':
             dataset2 = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", patch_size=config["patch_size"], split="train")
@@ -61,6 +64,7 @@ def main(args):
         
         if config["use_retrieval"]:
             print(f"Using Retrieval with k = {config['retrieval_k']}")
+            # b_num is for caching
             model = VisionLLaMA(config, retrieval_fn = lambda x, b: dataset.retrieve_closest(x, config["retrieval_k"], b_num=b))    
         else:
             model = VisionLLaMA(config, retrieval_fn = None)   
@@ -146,7 +150,6 @@ def main(args):
                             finished_training = True
 
 
-
     elif args.test:
         from eval.utils import eval_captioning, eval_object_classification
         print("Loading Validation Dataset ...")
@@ -160,7 +163,9 @@ def main(args):
             dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", patch_size=config["patch_size"], split="val")
         elif config['task'] == 'counting':
             dataset = CountCOCODataset(patch_size=config['patch_size'])
-
+        elif config['task'] == 'medical_object_classification':
+            dataset = CXR8Dataset(config, split="test", patch_size=config["patch_size"])
+            
 
         if config["use_retrieval"]:
             print("Preparing Retrieval Dataset from Train Split ...")
@@ -172,11 +177,16 @@ def main(args):
                 retrieval_dataset = VRPDataset(patch_size=config['patch_size'])
             elif config['task'] == 'counting':
                 retrieval_dataset = CountCOCODataset(patch_size=config['patch_size'])
+            elif config['task'] == 'medical_object_classification':
+                retrieval_dataset = CXR8Dataset(config, split="train", patch_size=config["patch_size"])
             model = VisionLLaMA(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], train_phase=False, b_num=b))    
         else:
             model = VisionLLaMA(config, retrieval_fn = None)    
 
-        OUTPUT_SAVE_PATH = os.path.join("outputs", config["task"], model._get_save_path(load_raw=True).split("/")[-1] + ".pkl")
+        # Ideally make this cleaner. The load_raw = True is so that the save path includes "retrieval"
+        # basically the name of the model constructed from the config, which includes the downstream task
+        # However, we want to load the model from a DIFFERENT TASK. Hence we need different behavior.
+        OUTPUT_SAVE_PATH = os.path.join("outputs", config["task"], config["llm_model"].split("/")[-1] + "_" + model._get_save_path(load_raw=True).split("/")[-1] + ".pkl")
         os.makedirs(os.path.join("outputs", config["task"]), exist_ok=True)
         print(OUTPUT_SAVE_PATH)
 
@@ -189,8 +199,6 @@ def main(args):
                 eval_object_classification(dataset, predictions)
             elif config["task"] == "refCOCOg":
                 eval_captioning(dataset, predictions)
-            
-
             exit()
 
         model.load()
@@ -216,23 +224,22 @@ def main(args):
                 image = batch['path_to_image']
        
                 output = model.generate(masks, image.copy(), questions, b_num = i)
+                #print(output)
                 output = output.lower().lstrip().rstrip().replace(".", "")
 
-                if output == answers[0]:
+                if output == answers[0].lower():
                     correct += 1
                 total += 1
                     
                 responses[i] = {}
                 responses[i]["path_to_image"] = batch["path_to_image"][0]
                 responses[i]["id"] = batch["id"][0]
-
                 responses[i]["question"] = batch['question'][0]
-                responses[i]["answer"] = batch['answer'][0]
+                responses[i]["answer"] = batch['answer'][0].lower()
                 responses[i]["prediction"] = output
-                #responses[i]["confidence"] = confidence.item()
 
-                print(responses[i])
-                print(correct/total)
+                #print(responses[i])
+                #print(correct/total)
 
         with open(OUTPUT_SAVE_PATH, "wb") as f:
             print(f"Saved model outputs to {OUTPUT_SAVE_PATH}")

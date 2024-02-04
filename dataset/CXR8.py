@@ -36,13 +36,14 @@ class CXR8Dataset(Dataset):
 
             #retrieval_path = "retrieval/object_classification/retrieval_set_1000000_1_clip-vit-large-patch14.pkl"
             #retrieval_path = "retrieval/object_classification/retrieval_set_1000000_dinov2-large.pkl"
-            with open(retrieval_path, 'rb') as f:
-                self.retrieval_data = pickle.load(f)
-                self.retrieval_keys = torch.FloatTensor(self.retrieval_data['keys']).to(self.config["device"])
-                self.retrieval_labels = self.retrieval_data['values']
-                self.retrieval_idx = self.retrieval_data['idx']
-                assert len(self.retrieval_keys) == len(self.retrieval_labels)
-                print(f'Loaded {len(self.retrieval_keys)} examples from {retrieval_path}.pkl')
+            if os.path.exists(retrieval_path):
+                with open(retrieval_path, 'rb') as f:
+                    self.retrieval_data = pickle.load(f)
+                    self.retrieval_keys = torch.FloatTensor(self.retrieval_data['keys']).to(self.config["device"])
+                    self.retrieval_labels = self.retrieval_data['values']
+                    self.retrieval_idx = self.retrieval_data['idx']
+                    assert len(self.retrieval_keys) == len(self.retrieval_labels)
+                    print(f'Loaded {len(self.retrieval_keys)} examples from {retrieval_path}.pkl')
     
     def _get_ViT_mask(self, bbox, height, width):
         arr = np.zeros((self.patch_size, self.patch_size))
@@ -51,8 +52,14 @@ class CXR8Dataset(Dataset):
         x_max = x_min + w
         height_bins = np.linspace(0, height, 16)
         width_bins = np.linspace(0, width, 16)
+        #print(x_min, x_max, y_min, y_max)
         x_min, x_max = np.digitize(np.array([x_min, x_max]), width_bins)
         y_min, y_max = np.digitize(np.array([y_min, y_max]), height_bins)
+        #print(x_min, x_max, y_min, y_max)
+        if y_min == y_max:
+            y_max += 1
+        if x_min == x_max:
+            x_max += 1
         arr[y_min:y_max, x_min:x_max] = 1
 
         return np.append(1, arr.flatten())
@@ -79,7 +86,9 @@ class CXR8Dataset(Dataset):
             if pathology not in cur_path_count:
                 cur_path_count[pathology] = 0
             
-            if cur_path_count[pathology] <= pathology_totals[pathology]:
+            if cur_path_count[pathology] < 20:
+            #if cur_path_count[pathology] <= pathology_totals[pathology]:
+
                 final_train.append(bbox_info.loc[i, :])
             else:
                 final_test.append(bbox_info.loc[i, :])
@@ -130,6 +139,7 @@ class CXR8Dataset(Dataset):
                 class_counts[c] = 0
             class_counts[c] += 1
         
+        print(class_counts)
         for key in class_counts:
             class_counts[key] = round(class_counts[key] / len(self.entries), 2)
         return class_counts
@@ -140,21 +150,18 @@ class CXR8Dataset(Dataset):
     def retrieve_closest(self, object_features, k, train_phase = True, b_num=-1):
 
         dist_matrix = (object_features @ self.retrieval_keys.T)
-        #print(dist_matrix.shape)
-        #print(len(torch.nonzero(torch.isnan(self.retrieval_keys.view(-1)))))
-
 
         if train_phase:
             closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 1:1+k]
         else:
             closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 0:k]
-        #print(closest_indices)
-        similarity_scores = [[round(dist_matrix[i, x].item(), 2) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
-        #print([[dist_matrix[i, x] for x in closest_indices[i,:]] for i in range(len(closest_indices))])
-        #print(similarity_scores)
-        retrieved_info = [[self.get_entry_by_id(self.retrieval_idx[x]) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
 
-        print(similarity_scores)
+        similarity_scores = [[round(dist_matrix[i, x].item(), 2) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
+        #print(self.retrieval_idx)
+        #retrieved_info = [[self.get_entry_by_id(self.retrieval_idx[x]) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
+        retrieved_info = [[self.entries[x] for x in closest_indices[i,:]] for i in range(len(closest_indices))]
+
+        #print(similarity_scores, retrieved_info)
 
         return retrieved_info, similarity_scores
 
