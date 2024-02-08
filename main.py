@@ -64,13 +64,19 @@ def main(args):
         
         if config["use_retrieval"]:
             print(f"Using Retrieval with k = {config['retrieval_k']}")
+            if config['task'] == "refCOCOg":
+                print(f"Loading retrieval set from COCO Objects")
+                retrieval_dataset = COCOObjectDataset(config, split="train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
+            else:
+                retrieval_dataset = dataset
             # b_num is for caching
-            model = VisionLLaMA(config, retrieval_fn = lambda x, b: dataset.retrieve_closest(x, config["retrieval_k"], b_num=b))    
+            model = VisionLLaMA(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], b_num=b))    
         else:
             model = VisionLLaMA(config, retrieval_fn = None)   
 
         print(f"Model SAVE/LOAD path is {model._get_save_path()}") 
         model.prepare_for_training()
+        print(model)
 
         optimizer = torch.optim.Adam(list(model.parameters()), lr=config['learning_rate'])
         
@@ -98,6 +104,8 @@ def main(args):
 
                 optimizer.zero_grad()
                 out = model(masks, images, questions, answers)
+                #print(batch["answer"][0])
+                #print(batch["question"][0])
                 if out == None:
                     continue
 
@@ -151,6 +159,7 @@ def main(args):
 
 
     elif args.test:
+        from PIL import Image
         from eval.utils import eval_captioning, eval_object_classification
         print("Loading Validation Dataset ...")
         if config['task'] == 'object_classification':
@@ -179,6 +188,9 @@ def main(args):
                 retrieval_dataset = CountCOCODataset(patch_size=config['patch_size'])
             elif config['task'] == 'medical_object_classification':
                 retrieval_dataset = CXR8Dataset(config, split="train", patch_size=config["patch_size"])
+            elif config['task'] == "refCOCOg":
+                retrieval_dataset = COCOObjectDataset(config, split="train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
+
             model = VisionLLaMA(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], train_phase=False, b_num=b))    
         else:
             model = VisionLLaMA(config, retrieval_fn = None)    
@@ -199,7 +211,7 @@ def main(args):
                 eval_object_classification(dataset, predictions)
             elif config["task"] == "refCOCOg":
                 eval_captioning(dataset, predictions)
-            exit()
+            #exit()
 
         model.load()
         model.eval()
@@ -222,8 +234,14 @@ def main(args):
                 questions = batch['question']
                 answers = batch['answer']
                 image = batch['path_to_image']
-       
-                output = model.generate(masks, image.copy(), questions, b_num = i)
+                bbox = batch['bbox'][0]
+                if config["crop_image"]:
+                    img = Image.open(image[0])
+                    cropped_image = img.crop((bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]))
+                    output = model.generate(masks, image.copy(), questions, b_num = i, cropped_images=[cropped_image])
+                else:
+                    output = model.generate(masks, image.copy(), questions, b_num = i)
+
                 #print(output)
                 output = output.lower().lstrip().rstrip().replace(".", "")
 
@@ -238,8 +256,8 @@ def main(args):
                 responses[i]["answer"] = batch['answer'][0].lower()
                 responses[i]["prediction"] = output
 
-                #print(responses[i])
-                #print(correct/total)
+                print(responses[i])
+                print(correct/total)
 
         with open(OUTPUT_SAVE_PATH, "wb") as f:
             print(f"Saved model outputs to {OUTPUT_SAVE_PATH}")

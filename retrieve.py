@@ -50,10 +50,6 @@ def get_object_feature(batch, processor, model, config):
 
     if config["crop_image"]:
         object_feature = image_forward_outs.hidden_states[-1][0,0,:].detach().cpu()
-    elif config["difference_feature"]:
-        CLS = image_forward_outs.hidden_states[-1][0,0,:].detach().cpu()
-        background = image_forward_outs.hidden_states[-1][0,1:,:][~mask].detach().cpu()
-        object_feature = CLS - torch.mean(background, dim = 0)
     else:
         image_features_high = image_forward_outs.hidden_states[-1][0,1:,:][mask].detach().cpu()
         object_feature = torch.mean(image_features_high, dim = 0)
@@ -71,8 +67,6 @@ def main(args):
 
     if config["crop_image"]:
         cropped = "cropped_"
-    elif config["difference_feature"]:
-        cropped = "difference_"
     else:
         cropped = ""
 
@@ -166,7 +160,7 @@ def main(args):
 
         with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl', 'rb') as f:
             data = pickle.load(f)
-        
+        print(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl')
         keys = data['keys']
         labels = data['values']
         zeroshot_train_classes = json.load(open("dataset/seen.json", 'r'))
@@ -268,14 +262,10 @@ def main(args):
         print(f"Top 5: {top_5 / len(dataset)}")
         print(f"Top 10: {top_10 / len(dataset)}")
         print(f"Majority Correct ({k}): {majority_correct / len(dataset):.5}")
-        print(f"Novel Accuracy: {novel_correct / novel_total}")
-        print(f"Base Accuracy: {base_correct / base_total}")
 
  
         out_file = open("/data/ossowski/cocoapi/results/test.json", "w") 
         json.dump(json_results, out_file) 
-        json.dump(json_novel_results, open("/data/ossowski/cocoapi/results/test_novel.json", "w"))
-        json.dump(json_base_results, open("/data/ossowski/cocoapi/results/test_base.json", "w"))
 
 
         # performances = {}

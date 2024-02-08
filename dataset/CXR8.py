@@ -50,8 +50,8 @@ class CXR8Dataset(Dataset):
         x_min, y_min, w, h = bbox
         y_max = y_min + h
         x_max = x_min + w
-        height_bins = np.linspace(0, height, 16)
-        width_bins = np.linspace(0, width, 16)
+        height_bins = np.linspace(0, height, self.patch_size)
+        width_bins = np.linspace(0, width, self.patch_size)
         #print(x_min, x_max, y_min, y_max)
         x_min, x_max = np.digitize(np.array([x_min, x_max]), width_bins)
         y_min, y_max = np.digitize(np.array([y_min, y_max]), height_bins)
@@ -79,7 +79,6 @@ class CXR8Dataset(Dataset):
 
         final_train = []
         final_test = []
-        pathology_totals = bbox_info['Finding Label'].value_counts() // 5
         cur_path_count = {}
         for i in range(len(bbox_info)):
             pathology = bbox_info.loc[i, "Finding Label"]
@@ -93,7 +92,7 @@ class CXR8Dataset(Dataset):
             else:
                 final_test.append(bbox_info.loc[i, :])
             cur_path_count[pathology] += 1
-
+        self.class_counts = cur_path_count
         if self.split == "train":
             entries = final_train
         elif self.split == "test":

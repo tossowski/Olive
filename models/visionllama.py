@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 from transformers import AutoModelForCausalLM, LlamaTokenizer, CLIPImageProcessor, AutoTokenizer, AutoProcessor, LlavaForConditionalGeneration, AutoImageProcessor, AutoModel
-
+from collections import Counter
 from models.object_encoder import ObjectEncoder
 from peft import PeftModel, LoraConfig, prepare_model_for_kbit_training, get_peft_model
 
@@ -112,7 +112,16 @@ class VisionLLaMA(nn.Module):
                 lora_dropout=0.1,
                 r=128,
                 bias="none",
-                task_type="CAUSAL_LM", 
+                task_type="CAUSAL_LM"
+                # target_modules=[
+                # "q_proj",
+                # "k_proj",
+                # "v_proj",
+                # "o_proj",
+                # "gate_proj",
+                # "up_proj",
+                # "down_proj",
+                # "lm_head"]
             )
 
             self.llama_model = prepare_model_for_kbit_training(self.llama_model)
@@ -249,6 +258,7 @@ class VisionLLaMA(nn.Module):
  
         if self.config["use_retrieval"] and len(segmentations) > 0:
             if self.config["crop_image"]:
+                print("Retrieving with cropped images")
                 prompts, retrieved_masks, retrieved_images = self.get_retrieval_prompt(segmentations, images, b_num=b_num, cropped_images=cropped_images)
             else:
                 prompts, retrieved_masks, retrieved_images = self.get_retrieval_prompt(segmentations, images, b_num=b_num)
@@ -362,23 +372,33 @@ class VisionLLaMA(nn.Module):
         masks = []
         all_images = []
         #print(closest_entries, similarity_scores)
+
         for i in range(len(closest_entries)):
-            prompt = f"The top {self.config['retrieval_k']} related objects are:\n"
             entries = closest_entries[i]
+            answers = [entry['answer'] for entry in entries]
+            majority_element = max(Counter(answers), key=Counter(answers).get)
+            
+            if self.config['majority_vote_retrieval']:
+                prompt = f"The top {Counter(answers).get(majority_element)} related objects are:\n"
+
+            else:
+                prompt = f"The top {self.config['retrieval_k']} related objects are:\n"
             images = []
             segmentations = []
             for x, entry in enumerate(entries):
-                
+                if self.config['majority_vote_retrieval'] and entry["answer"] != majority_element:
+                    continue
                 prompt += f"[obj] {entry['answer']} with confidence {similarity_scores[i][x]:.2}\n"
                 segmentations.append(torch.BoolTensor(entry["vit_mask"]).to(self.config["device"]))
                 images.append(entry["path_to_image"])
             prompt += "\n"
             prompts.append(prompt)
+            
             #print(torch.stack(segmentations, axis = 0).shape)
             masks.append(torch.stack(segmentations, axis = 0))
             all_images.append(images)
         #print(torch.stack(masks, axis = 0).shape)
-    
+        #print(prompts[0])
         return prompts, masks, all_images
 
         #print(closest_entries)
@@ -407,7 +427,7 @@ class VisionLLaMA(nn.Module):
         if return_retrieved_info:
             final_input, label_input, attention_mask, prompts, masks, images = self.prepare_input(segmentations, images, sentences, labels=None, return_retrieved_info=True, b_num=b_num, cropped_images = cropped_images)
         else:
-            final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels=None, b_num=b_num)
+            final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels=None, b_num=b_num, cropped_images = cropped_images)
         
         out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=100, top_p=0.0, top_k=1)
         #out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30, temperature=1)
