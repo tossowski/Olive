@@ -1,5 +1,5 @@
-vision_encoder: "openai/clip-vit-large-patch14-336"
-#vision_encoder: "openai/clip-vit-large-patch14"
+#vision_encoder: "openai/clip-vit-large-patch14-336"
+vision_encoder: "openai/clip-vit-large-patch14"
 #vision_encoder: "facebook/dinov2-large"
 llm_model: "meta-llama/Llama-2-7b-chat-hf"
 #llm_model: "llava-hf/llava-1.5-7b-hf"
@@ -16,19 +16,20 @@ freeze_vision_encoder: True
 freeze_llm: False
 save_folder: "./checkpoints"
 #task: "image_captioning"
-#task: "object_classification"
+task: "object_classification"
 #task: "medical_object_classification"
 #task: "open_vocab_object_classification"
 #task: "counting"
 #task: "relation_prediction"
-task: "refCOCOg"
+#task: "refCOCOg"
 #task: "ALL"
+#task: "Nothing"
 
 # Use object level annotations for training/eval image captioning/VQA
 use_object_annotations: True
 system_prompt: "You are a helpful vision assistant trained to help people analyze images."
-device: "cuda:0"
-patch_size: 24
+device: "cuda:2"
+patch_size: 16
 n_decoder_layers: 32
 batch_size: 4
 learning_rate: 0.00002
@@ -36,15 +37,16 @@ early_stopping: False
 check_loss_steps: 1000
 examples_per_class: 1000000
 pretrained_object_encoder_checkpoint: "None"
-n_epochs: 5
+n_epochs: 1
 
 #load_model_path: "./checkpoints/llama_2_finetuned_checkpoints/object_classification/frozen_llm_clip_retrieval_16x16_patches"
 #load_model_path: "./checkpoints/llama_2_finetuned_checkpoints/object_classification/frozen_llm_clip_16x16_patches"
 load_model_path: False
 
-retrieval_set_path: "retrieval/object_classification/retrieval_set_1000000_clip-vit-large-patch14-336.pkl"
-use_retrieval: True # Whether or not to retrieve in-context examples
+#retrieval_set_path: "retrieval/object_classification/retrieval_set_1000000_clip-vit-large-patch14-336.pkl"
+use_retrieval: False # Whether or not to retrieve in-context examples
 retrieval_k: 5 # Number of retrieved in-context examples
+#additional_retrieval_examples: "./adversarial_examples"
 majority_vote_retrieval: False
 use_image_features: False # Concatenate ViT Image Features to LLM Input Embeddings (slow!)
 crop_image: False

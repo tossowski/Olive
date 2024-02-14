@@ -7,10 +7,11 @@ from dataset.objectCOCO import COCOObjectDataset
 from dataset.LVIS import LVISDataset
 from dataset.VRP import VRPDataset
 from dataset.CXR8 import CXR8Dataset
+from dataset.customRetrieval import RetrievalDataset
 from torch.utils.data import DataLoader
 from transformers import logging, CLIPImageProcessor, CLIPVisionModel, AutoImageProcessor, AutoModel
 from PIL import Image
-from collections import Counter
+
 import numpy as np
 from tqdm import tqdm
 from scipy.spatial.distance import cdist
@@ -99,12 +100,19 @@ def main(args):
         elif config['task'] == 'counting':
             dataset = CountCOCODataset(patch_size=config['patch_size'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+        
 
         object_feats = []
         labels = []
         image_ids = []
         retrieval_index = []
-        print(f'The retrieval features will be saved in retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl')
+        retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
+        if "additional_retrieval_examples" in config:
+            retrieval_path = os.path.join(config["additional_retrieval_examples"], config["vision_encoder"].split("/")[-1] + ".pkl")
+            dataset = RetrievalDataset(config)
+            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+        
+        print(f'The retrieval features will be saved in {retrieval_path}')
         if config["crop_image"]:
             print("Will crop objects to create the feature")
 
@@ -130,17 +138,24 @@ def main(args):
         retrieval_set['idx'] = retrieval_index
 
         os.makedirs(f"retrieval/{config['task']}", exist_ok=True)
-        with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl', 'wb') as f:
+        with open(retrieval_path, 'wb') as f:
             pickle.dump(retrieval_set, f)
 
     elif args.test:
+        from collections import Counter
         config["batch_size"] = 1
         cache = {} # Saving most similar objects
         CACHE_PATH = f'cache/{config["task"]}/retrieval_cache_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
+        print(CACHE_PATH)
         if os.path.exists(CACHE_PATH):
             with open(CACHE_PATH, 'rb') as f:
-                cache = pickle.load(f)
-                print(f"Loaded cached retrieval similarity from {CACHE_PATH}")
+                try:
+                    cache = pickle.load(f)
+                    print(f"Loaded cached retrieval similarity from {CACHE_PATH}")
+                except:
+                    cache = {}
+                    print(f"Problem Loading Cache (dictionary empty)")
+                
 
         if config['task'] == 'object_classification':
             dataset = COCOObjectDataset(config, split="val", patch_size=config['patch_size'], max_examples_per_class = 1000000)
@@ -160,7 +175,7 @@ def main(args):
 
         with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl', 'rb') as f:
             data = pickle.load(f)
-        print(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl')
+        #print(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl')
         keys = data['keys']
         labels = data['values']
         zeroshot_train_classes = json.load(open("dataset/seen.json", 'r'))
@@ -268,22 +283,22 @@ def main(args):
         json.dump(json_results, out_file) 
 
 
-        # performances = {}
-        # for i in range(1,51):
-        #     majority_correct = 0
-        #     for b_num, batch in enumerate(train_loader):
-        #         answers = batch['answer']
-        #         c = [x[0] for x in cache[b_num]]
-        #         predictions = [labels[x] for x in c]
-        #         from collections import Counter
+        performances = {}
+        for i in range(1,51):
+            majority_correct = 0
+            for b_num, batch in enumerate(train_loader):
+                answers = batch['answer']
+                c = [x[0] for x in cache[b_num]]
+                predictions = [labels[x] for x in c]
+                from collections import Counter
                 
-        #         majority_element = max(Counter(predictions[:i]), key=Counter(predictions[:i]).get)
-        #         if majority_element == answers[0]:
-        #             majority_correct += 1
+                majority_element = max(Counter(predictions[:i]), key=Counter(predictions[:i]).get)
+                if majority_element == answers[0]:
+                    majority_correct += 1
         
-        #     print(f"Majority Correct ({i}): {majority_correct / len(dataset):.2}")
-        #     performances[i] = round(majority_correct / len(dataset), 4)
-        # print(performances)
+            print(f"Majority Correct ({i}): {majority_correct / len(dataset):.2}")
+            performances[i] = round(majority_correct / len(dataset), 4)
+        print(performances)
 
 
 

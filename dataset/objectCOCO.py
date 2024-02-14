@@ -9,7 +9,7 @@ import pickle
 import random
 from tqdm import tqdm
 from torch.utils.data import Dataset
-
+from dataset.customRetrieval import RetrievalDataset
 
 class COCOObjectDataset(Dataset):
     # Path to instances.json
@@ -24,8 +24,9 @@ class COCOObjectDataset(Dataset):
 
         self.config = config
         self.data = json.load(open(dataset_path))
-        self.prompts = ["[obj] What is this? Answer as short as possible.",
-                        "[obj] What is this object? Answer as short as possible."]
+        self.prompts = ["[obj] What is this?",
+                        "[obj] What is this object?",
+                        "[obj] Identify this object."]
         self.patch_size = patch_size
         self.max_examples_per_class = max_examples_per_class
         self.class_counts = {}
@@ -40,9 +41,10 @@ class COCOObjectDataset(Dataset):
 
             if "retrieval_set_path" in config:
                 retrieval_path = config["retrieval_set_path"]
-            retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
+            else:
+                retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
             #retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{config["vision_encoder"].split("/")[-1]}.pkl'
-
+            print(retrieval_path)
             #retrieval_path = "retrieval/object_classification/retrieval_set_1000000_1_clip-vit-large-patch14.pkl"
             #retrieval_path = "retrieval/object_classification/retrieval_set_1000000_dinov2-large.pkl"
             with open(retrieval_path, 'rb') as f:
@@ -51,7 +53,26 @@ class COCOObjectDataset(Dataset):
                 self.retrieval_labels = self.retrieval_data['values']
                 self.retrieval_idx = self.retrieval_data.get('idx', None)
                 assert len(self.retrieval_keys) == len(self.retrieval_labels)
-                print(f'Loaded {len(self.retrieval_keys)} examples from {retrieval_path}.pkl')
+                print(f'Loaded {len(self.retrieval_keys)} examples from {retrieval_path}')
+
+            if "additional_retrieval_examples" in config:
+                path_to_additional_examples = os.path.join(config["additional_retrieval_examples"], config["vision_encoder"].split("/")[-1] + ".pkl")
+                dataset = RetrievalDataset(config)
+                with open(path_to_additional_examples, "rb") as f:
+                    data = pickle.load(f)
+                self.additional_retrieval_keys = torch.FloatTensor(data['keys']).to(self.config["device"])
+                self.additional_retrieval_labels = data['values']
+
+                if self.retrieval_idx:
+                    self.additional_retrieval_idx = data.get('idx', None)
+                    self.additional_retrieval_idx = [x + len(self) for x in self.additional_retrieval_idx]
+                    self.retrieval_idx.extend(self.additional_retrieval_idx)
+                self.retrieval_labels.extend(self.additional_retrieval_labels)
+                self.retrieval_keys = torch.cat((self.retrieval_keys, self.additional_retrieval_keys), axis = 0)
+                self.entries.extend(dataset.entries)
+                
+
+                
     
     def _load_dataset(self):
 
@@ -137,6 +158,7 @@ class COCOObjectDataset(Dataset):
             closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 1:1+k]
         else:
             closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 0:k]
+
 
         similarity_scores = [[round(dist_matrix[i, x].item(), 2) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
         if self.retrieval_idx:

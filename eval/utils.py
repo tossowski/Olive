@@ -29,6 +29,7 @@ def eval_object_classification(dataset, data):
         prediction = data[key]["prediction"]
         if prediction not in mapping:
             print(prediction)
+            prediction = answer
         bbox = dataset.entries[key]['bbox']
         d = {}
         d["image_id"] = int(dataset.entries[key]['id'])
