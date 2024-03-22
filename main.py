@@ -2,10 +2,15 @@ import os
 import torch
 from dataset.RefCOCO import RefCOCODataset
 from dataset.countCOCO import CountCOCODataset
+from dataset.GRIT import GRITDataset
 from dataset.objectCOCO import COCOObjectDataset
 from dataset.LVIS import LVISDataset
 from dataset.CXR8 import CXR8Dataset
 from dataset.VRP import VRPDataset
+from dataset.pointqa import PointQADataset
+from dataset.ocr import OCRDataset
+from dataset.visual7w import Visual7WDataset
+
 from dataset.visualgenome import VisualGenomeDataset
 from torch.utils.data import DataLoader
 from transformers import logging
@@ -34,6 +39,19 @@ def main(args):
         elif config['task'] == 'zeroshot_object_classification':
             dataset = COCOObjectDataset(config, split="zeroshot_train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+        elif config['task'] == 'GRIT':
+            dataset = GRITDataset("/data/ossowski/GRIT", patch_size=config['patch_size'])
+            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+        elif config['task'] == 'PointQA':
+            dataset = PointQADataset(config, patch_size=config['patch_size'])
+            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+        elif config['task'] == 'OCR':
+            dataset = OCRDataset(config, patch_size=config['patch_size'])
+            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+        elif config['task'] == 'Visual7W':
+            dataset = Visual7WDataset(config, patch_size=config['patch_size'])
+            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+        
         elif config['task'] == "open_vocab_object_classification":
             dataset = LVISDataset(config, split="val", patch_size=config['patch_size'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2)
@@ -76,20 +94,41 @@ def main(args):
 
         print(f"Model SAVE/LOAD path is {model._get_save_path()}") 
         model.prepare_for_training()
-        print(model)
+        #print(model)
 
-        optimizer = torch.optim.Adam(list(model.parameters()), lr=config['learning_rate'])
-        
+        all_params = list(model.parameters())
+        trainable_params = [x for x in all_params if x.requires_grad]
+        #print(len(trainable_params))
+        #print(len(all_params))
+
+        optimizer = torch.optim.AdamW(trainable_params, lr=config['learning_rate'])
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(dataset) * config['n_epochs'] // config['batch_size'], 0.000001, last_epoch=-1)
+
         past_losses = []
         best_avg_loss = float("inf")
         finished_training = False
         consecutive_no_improvement = 0
-        for epoch in range(config["n_epochs"]):
+
+        start_epoch = 0
+        start_batch = 0
+        if args.resume:
+                #checkpoint = {'epoch': epoch, "step": b_num, "optimizer": optimizer.state_dict(), "scheduler": scheduler}
+            model.load()
+            checkpoint = torch.load(os.path.join(model._get_save_path(), 'checkpoint.pth'), map_location={'cuda:3': 'cuda:2'})
+            start_epoch = checkpoint['epoch']
+            start_batch = checkpoint['step']
+            scheduler = checkpoint['scheduler']
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            print(start_epoch, start_batch, scheduler.get_last_lr())
+
+
+        for epoch in range(start_epoch, config["n_epochs"]):
             model.train()
             if finished_training:
                 break
             for b_num, batch in enumerate(tqdm(train_loader)):
-
+                if b_num < start_batch:
+                    continue
                 masks = batch["vit_mask"]
                 questions = batch['question']
                 answers = batch['answer']
@@ -103,7 +142,11 @@ def main(args):
                 
 
                 optimizer.zero_grad()
-                out = model(masks, images, questions, answers)
+                try:
+                    out = model(masks, images, questions, answers)
+                except:
+                    print("Skipped batch because of error")
+                    continue
                 #print(batch["answer"][0])
                 #print(batch["question"][0])
                 if out == None:
@@ -113,7 +156,8 @@ def main(args):
                 past_losses.append(loss.item())
                 loss.backward()
                 optimizer.step()
-
+                scheduler.step()
+                #print(scheduler.get_last_lr())
                 del loss
                 del out
 
@@ -127,6 +171,10 @@ def main(args):
                     if not config["early_stopping"]:
                         print(f"Loss is {round(avg_loss, 2)}")
                         SAVE_PATH = model._get_save_path()
+                        os.makedirs(SAVE_PATH, exist_ok=True)
+
+                        checkpoint = {'epoch': epoch, "step": b_num, "optimizer": optimizer.state_dict(), "scheduler": scheduler}
+                        torch.save(checkpoint, os.path.join(SAVE_PATH, 'checkpoint.pth'))
                         
                         model.save()
 
@@ -156,6 +204,13 @@ def main(args):
                             updates = 10 * config["check_loss_steps"] * config["batch_size"]
                             print(f"Loss did not improve after {updates} steps, exiting ...")
                             finished_training = True
+            SAVE_PATH = model._get_save_path()
+
+            checkpoint = {'epoch': epoch, "step": b_num, "optimizer": optimizer.state_dict(), "scheduler": scheduler}
+            torch.save(checkpoint, os.path.join(SAVE_PATH, 'checkpoint.pth'))
+            
+            model.save()
+
 
 
     elif args.test:
@@ -169,11 +224,13 @@ def main(args):
         elif config['task'] == 'image_captioning':
             dataset = VRPDataset("test", patch_size=config['patch_size'])
         elif config['task'] == "refCOCOg":
-            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", patch_size=config["patch_size"], split="val")
+            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", patch_size=config["patch_size"], split="test")
         elif config['task'] == 'counting':
             dataset = CountCOCODataset(patch_size=config['patch_size'])
         elif config['task'] == 'medical_object_classification':
             dataset = CXR8Dataset(config, split="test", patch_size=config["patch_size"])
+        elif config['task'] == 'Visual7W':
+            dataset = Visual7WDataset(config, split="test", patch_size=config['patch_size'])
             
 
         if config["use_retrieval"]:
@@ -272,6 +329,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="./configs/config.yaml")
     parser.add_argument("--train", action="store_true")
+    parser.add_argument("--resume", action="store_true")
+
     parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
 

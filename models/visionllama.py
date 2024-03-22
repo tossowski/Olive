@@ -32,6 +32,7 @@ class VisionLLaMA(nn.Module):
             image = Image.open(BytesIO(response.content)).convert('RGB')
         else:
             image = Image.open(image_file).convert('RGB')
+            #print(np.array(image).shape)
         return image
 
     # Retrieval function a function which takes in query object features and returns
@@ -102,11 +103,11 @@ class VisionLLaMA(nn.Module):
             self.llama_model.requires_grad_(False)
             # if "gpt2" in base_model:
             #     self.llama_model.lm_head.requires_grad_(True)
-        print(f"There are {self.count_trainable_parameters()} trainable parameters")
+        #print(f"There are {self.count_trainable_parameters()} trainable parameters")
         #print(f"It has {self.count_trainable_parameters()} trainable parameters")
 
     def prepare_for_training(self):
-        if not self.config["freeze_llm"]:
+        if not self.config["freeze_llm"] and "gpt2" not in self.config["llm_model"]:
             peft_config = LoraConfig(
                 lora_alpha=256,
                 lora_dropout=0.1,
@@ -126,6 +127,9 @@ class VisionLLaMA(nn.Module):
 
             self.llama_model = prepare_model_for_kbit_training(self.llama_model)
             self.llama_model = get_peft_model(self.llama_model, peft_config)
+            self.llama_model.print_trainable_parameters()
+        else:
+            print(f"There are {self.count_trainable_parameters()} trainable parameters")
 
     # Key function which replaces [obj] tokens in input with their vector representation
     # special_values: list of tensor of object vectors. each element is (n_segmentations x 4096)
@@ -514,7 +518,8 @@ class VisionLLaMA(nn.Module):
                     SAVE_PATH).to(self.config["device"])
             return
         
-        self.llama_model = PeftModel.from_pretrained(self.llama_model, SAVE_PATH)
+        if "gpt2" not in self.config["llm_model"]:
+            self.llama_model = PeftModel.from_pretrained(self.llama_model, SAVE_PATH)
         
         
 
