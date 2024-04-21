@@ -1,6 +1,8 @@
 # Object Level In-Context Visual Embeddings (OLIVE)
 
-This repository contains the code for the paper "Object Level In-Context Visual Embeddings (OLIVE)". The repo has code to train the models described in the paper, which can be achieved by following the instructions below. 
+This repository contains the code for the paper "Object Level In-Context Visual Embeddings (OLIVE)". The repo has code to train the models described in the paper, which can be achieved by following the instructions below.
+
+![Architecture of OLIVE](images/architecture.svg)
 
 * The model allows for free form selection of areas of the image for reasoning.
 
@@ -96,3 +98,7 @@ python main.py --test
 ```
 
 After training, you can also test the model qualitatively using our demo notebook. Run the cells in the `demo.ipynb` notebook to open the gradio interface:
+
+![Gradio Interface](images/example.png)
+
+To use the demo, make sure to put `[obj]` in your chat message to refer to your selected object. This will be replaced by the object feature during input preparation.

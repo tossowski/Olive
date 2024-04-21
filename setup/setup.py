@@ -31,21 +31,21 @@ os.chdir(train_image_path)
 # Download Data
 
 # Object Classification Data
-# subprocess.run(["wget", "http://images.cocodataset.org/zips/train2017.zip"])
-# subprocess.run(["wget", "http://images.cocodataset.org/zips/val2017.zip"])
-# subprocess.run(["wget", "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"])
-# subprocess.run(["unzip", "train2017.zip"])
-# subprocess.run(["unzip", "val2017.zip"])
-# subprocess.run(["unzip", "annotations_trainval2017.zip"])
-# subprocess.run(["rm", "train2017.zip"])
-# subprocess.run(["rm", "val2017.zip"])
-# subprocess.run(["rm", "annotations_trainval2017.zip"])
+subprocess.run(["wget", "http://images.cocodataset.org/zips/train2017.zip"])
+subprocess.run(["wget", "http://images.cocodataset.org/zips/val2017.zip"])
+subprocess.run(["wget", "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"])
+subprocess.run(["unzip", "train2017.zip"])
+subprocess.run(["unzip", "val2017.zip"])
+subprocess.run(["unzip", "annotations_trainval2017.zip"])
+subprocess.run(["rm", "train2017.zip"])
+subprocess.run(["rm", "val2017.zip"])
+subprocess.run(["rm", "annotations_trainval2017.zip"])
 
 
 # RefCOCOg (Referring Expression Generation)
-# subprocess.run(["wget", "https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip"])
-# subprocess.run(["unzip", "refcocog.zip"])
-# subprocess.run(["rm", "refcocog.zip"])
+subprocess.run(["wget", "https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip"])
+subprocess.run(["unzip", "refcocog.zip"])
+subprocess.run(["rm", "refcocog.zip"])
 
 
 # Medical Chest XRays
@@ -81,7 +81,6 @@ for idx, link in enumerate(links):
 
     subprocess.run(["rm", location])
 
-exit()
 
 for split in ["train", "val"]:
     for patch_size in [16, 24]:
