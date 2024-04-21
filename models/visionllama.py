@@ -31,6 +31,7 @@ class VisionLLaMA(nn.Module):
             response = requests.get(image_file)
             image = Image.open(BytesIO(response.content)).convert('RGB')
         else:
+            #print(image_file)
             image = Image.open(image_file).convert('RGB')
             #print(np.array(image).shape)
         return image
@@ -75,7 +76,7 @@ class VisionLLaMA(nn.Module):
             self.object_encoder.projector.requires_grad_(False)
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
             self.tokenizer.padding_side = "right"
-            assert self.config["patch_size"] == 24
+            assert self.config["n_patches"] == 24
         
         # Add special token for object
         self.tokenizer.add_tokens(["[obj]"])
@@ -113,16 +114,16 @@ class VisionLLaMA(nn.Module):
                 lora_dropout=0.1,
                 r=128,
                 bias="none",
-                task_type="CAUSAL_LM"
-                # target_modules=[
-                # "q_proj",
-                # "k_proj",
-                # "v_proj",
-                # "o_proj",
-                # "gate_proj",
-                # "up_proj",
-                # "down_proj",
-                # "lm_head"]
+                task_type="CAUSAL_LM",
+                target_modules=[
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+                "lm_head"]
             )
 
             self.llama_model = prepare_model_for_kbit_training(self.llama_model)
@@ -152,7 +153,7 @@ class VisionLLaMA(nn.Module):
                 image_features, inputs_embeds, input_ids, attention_mask, input_ids
             )
 
-            batch_tokens[:, 1:(self.config["patch_size"] ** 2) + 2] = 1 # We will override this with the image features later. Otherwise this causes an embedding lookup error because it is filled with -100
+            batch_tokens[:, 1:(self.config["n_patches"] ** 2) + 2] = 1 # We will override this with the image features later. Otherwise this causes an embedding lookup error because it is filled with -100
             # Just need to make sure to reset it later
 
             inputs_embeds = inputs_embeds.to(self.config["device"])
@@ -161,7 +162,7 @@ class VisionLLaMA(nn.Module):
             if labels is not None:
                 labels = batch_tokens
 
-            final_image_input = inputs_embeds[:, 1:(self.config["patch_size"] ** 2) + 2, :]
+            final_image_input = inputs_embeds[:, 1:(self.config["n_patches"] ** 2) + 2, :]
 
         
 
@@ -169,7 +170,7 @@ class VisionLLaMA(nn.Module):
 
         if len(special_values) == 0:
             if self.config["use_image_features"]:
-                batch_tokens[:, 1:(self.config["patch_size"] ** 2) + 2] = -100
+                batch_tokens[:, 1:(self.config["n_patches"] ** 2) + 2] = -100
                 return inputs_embeds, batch_tokens, attention_mask.to(self.config["device"])
             input_embeds = embed_layer(batch_tokens).to(self.config["device"])
             
@@ -236,7 +237,7 @@ class VisionLLaMA(nn.Module):
                 cur_new_labels = torch.cat(cur_new_labels, dim=0)
 
                 if self.config["use_image_features"]:
-                    cur_new_labels[1:(self.config["patch_size"] ** 2) + 2] = -100
+                    cur_new_labels[1:(self.config["n_patches"] ** 2) + 2] = -100
                 new_labels.append(cur_new_labels)
             
         
@@ -246,11 +247,11 @@ class VisionLLaMA(nn.Module):
             new_labels  = torch.stack(new_labels, dim=0).to(self.config["device"])
 
         if self.config["use_image_features"]:
-            new_input_embeds[:, 1:(self.config["patch_size"] ** 2) + 2, :] = final_image_input
+            new_input_embeds[:, 1:(self.config["n_patches"] ** 2) + 2, :] = final_image_input
  
         # if len(image_features) > 0:
         #     image_features = torch.cat(image_features, axis = 0).to(self.config["device"])
-        #     n_patches = 1 + self.config["patch_size"] ** 2
+        #     n_patches = 1 + self.config["n_patches"] ** 2
         #     new_input_embeds = torch.cat((image_features, new_input_embeds), axis = 1)
         #     new_labels = torch.cat((-100 * torch.ones((self.config["batch_size"], n_patches), dtype=torch.long).to(self.config["device"]), new_labels), axis = 1)
         #     new_attn_mask = torch.cat((torch.ones((self.config["batch_size"], n_patches), dtype=torch.long).to(self.config["device"]), new_attn_mask), axis = 1)
@@ -316,7 +317,9 @@ class VisionLLaMA(nn.Module):
                 inputs = self.object_encoder.processor(images=images[i], return_tensors="pt").to(self.config["device"])
                 transformer_output = self.object_encoder.model(**inputs).last_hidden_state
                 if self.config["use_image_features"]:
-                    image_features.append(self.llama_model.multi_modal_projector(transformer_output))
+                    if "llava" in self.config["llm_model"]:
+                        image_features.append(self.llama_model.multi_modal_projector(transformer_output))
+
 
                 mask_input = segmentations[i]
                 if len(mask_input.shape) == 1:
@@ -411,7 +414,7 @@ class VisionLLaMA(nn.Module):
     # Labels: List of strings (the answers)
     # Image: list of list of paths to images
     # Segmentations: List of list of Binary 16x16 mask
-    def forward(self, segmentations, images, sentences, labels=None):
+    def forward(self, segmentations, images, sentences, labels=None, output_hidden_states=False):
         final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels)
         
         for i in range(len(label_input)):
@@ -422,7 +425,7 @@ class VisionLLaMA(nn.Module):
             label_input[i, :idx + 1] = -100
         #print(label_input)
 
-        return self.llama_model(inputs_embeds = final_input, labels = label_input, attention_mask=attention_mask)
+        return self.llama_model(inputs_embeds = final_input, labels = label_input, attention_mask=attention_mask, output_hidden_states=output_hidden_states)
 
     
 
@@ -452,7 +455,7 @@ class VisionLLaMA(nn.Module):
 
     def _get_save_path(self, load_raw=False):
 
-        if self.config["load_model_path"] and not load_raw:
+        if "load_model_path" in self.config and not load_raw:
             return self.config["load_model_path"]
 
         SAVE_PATH = ""
@@ -483,6 +486,9 @@ class VisionLLaMA(nn.Module):
             SAVE_PATH += "retrieval_"        
         # if self.config["use_image_features"]:
         #     SAVE_PATH += "with_img_features_"
+        
+        if self.config["no_compression"]:
+            SAVE_PATH += "no_compression_"       
 
         if self.config["task"] == "image_captioning":
             if self.config["use_object_annotations"]:
@@ -491,10 +497,8 @@ class VisionLLaMA(nn.Module):
 
         
 
-        patch_size = self.config["patch_size"]
-        SAVE_PATH += f"{patch_size}x{patch_size}_patches_"
-
-        #SAVE_PATH += f"{self.config['examples_per_class']}_examples_per_class_"
+        n_patches = self.config["n_patches"]
+        SAVE_PATH += f"{n_patches}x{n_patches}_patches_"
         
         SAVE_PATH = SAVE_PATH[:-1]
         if "llama" in self.config["llm_model"].lower():
@@ -520,6 +524,10 @@ class VisionLLaMA(nn.Module):
         
         if "gpt2" not in self.config["llm_model"]:
             self.llama_model = PeftModel.from_pretrained(self.llama_model, SAVE_PATH)
+        else:
+            #self.llama_model = PeftModel.from_pretrained(self.llama_model, SAVE_PATH)
+            self.llama_model = AutoModelForCausalLM.from_pretrained(
+                    SAVE_PATH).to(self.config["device"])
         
         
 

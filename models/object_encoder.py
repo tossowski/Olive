@@ -96,6 +96,11 @@ class ObjectEncoder(nn.Module):
         #print(attention_mask)
         test = [image_features[i][segmentations[i]] for i in range(image_features.shape[0])]
         features = pad_sequence(test, batch_first=True)
+
+        if self.config["no_compression"]:
+            return self.projector(features[0])
+        else:
         #out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]
-        out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]
-        return self.projector(out)
+            out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]
+            #print(features.shape)
+            return self.projector(out)

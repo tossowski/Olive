@@ -10,12 +10,11 @@ from torch.utils.data import Dataset
 import random
 
 class RefCOCODataset(Dataset):
-    # Path to instances.json
-    # Path to COCO2014/COCO2017 train images
-    def __init__(self, data_root, train_image_path, patch_size=16, split='train'):
+
+    def __init__(self, data_root, train_image_path, n_patches=16, split='train'):
         super(RefCOCODataset, self).__init__()
         self.data = json.load(open(os.path.join(data_root, "instances.json") , "r"))
-        self.patch_size = patch_size
+        self.n_patches = n_patches
         self.ref_data = pickle.load(open(os.path.join(data_root, "refs(google).p"), "rb"))
         self.image_path = train_image_path
         self.prompts = ["[obj] Briefly describe this image region",
@@ -38,16 +37,17 @@ class RefCOCODataset(Dataset):
 
     def _get_ViT_mask(self, segmentation, height, width):
         
-        output_width, output_height = self.patch_size, self.patch_size
+        output_width, output_height = self.n_patches, self.n_patches
         rles = mask.frPyObjects(segmentation, height, width)
         rle = mask.merge(rles)
         m =  mask.decode(rle).astype(bool)
 
         rle['counts'] = rle['counts'].decode('ascii')
-        pooled_mask = skimage.measure.block_reduce(m, block_size=(math.floor(height / self.patch_size), math.floor(width / self.patch_size)), func=np.max)
+        pooled_mask = skimage.measure.block_reduce(m, block_size=(math.floor(height / self.n_patches), math.floor(width / self.n_patches)), func=np.max)
 
 
         result_height, result_width = pooled_mask.shape
+
         # If the result is smaller than 16x16, pad it with zeros
         if result_height < output_height or result_width < output_width:
             pad_height = output_height - result_height
@@ -67,11 +67,10 @@ class RefCOCODataset(Dataset):
             
             if entry['split'] != self.split:
                 continue
-            #print(entry['split'])
-            # for sent in entry['sentences']:
+
             sample_info = {}
             image_id = entry['image_id']
-            path_to_image = f"/data/ossowski/COCO2017/train/data/{self.image_dict[image_id]['file_name'].split('_')[-1]}"
+            path_to_image = os.path.join(self.image_path, f"{self.image_dict[image_id]['file_name'].split('_')[-1]}")
             annotation = self.ann_dict[entry['ann_id']]
             segmentation = annotation['segmentation']
             category_id = self.ann_dict[entry['ann_id']]['category_id']
@@ -95,6 +94,7 @@ class RefCOCODataset(Dataset):
             sample_info['question'] = random.choice(self.prompts)
             sample_info['answer'] = sample_info['sentence']
             entries.append(sample_info)
+
         return entries
 
     def collate_fn(self, batch):
@@ -110,19 +110,11 @@ class RefCOCODataset(Dataset):
         }
 
     def stats(self):
-        class_counts = {}
-        for example in self.entries:
-            c = example['answer']
-            if c not in class_counts:
-                class_counts[c] = 0
-            class_counts[c] += 1
         
-        for key in class_counts:
-            class_counts[key] = round(class_counts[key] / len(self.entries), 2)
-        return class_counts
+        return {}
 
     def __str__(self):
-        return f"RefCOCO {self.split} dataset with {len(self.entries)} questions"
+        return f"RefCOCOg {self.split} dataset with {len(self.entries)} questions"
 
 
     def __len__(self):

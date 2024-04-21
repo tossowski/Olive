@@ -1,0 +1,34 @@
+DATA_FOLDER: "/data/ossowski/OLIVE"
+
+vision_encoder: "openai/clip-vit-large-patch14-336"
+
+llm_model: "meta-llama/Llama-2-7b-chat-hf"
+
+no_compression: False
+freeze_vision_encoder: True
+freeze_llm: False
+save_folder: "./checkpoints"
+task: "object_classification"
+
+# Use object level annotations for training/eval image captioning/VQA
+use_object_annotations: True
+system_prompt: "You are a helpful vision assistant trained to help people analyze images."
+device: "cuda:0"
+
+n_decoder_layers: 32
+batch_size: 2
+learning_rate: 0.00002
+early_stopping: False
+check_loss_steps: 1000
+examples_per_class: 1000000
+pretrained_object_encoder_checkpoint: "None"
+n_epochs: 1
+
+#load_model_path: "./checkpoints/llama_2_finetuned_checkpoints/object_classification/finetuned_llm_clip_336_retrieval_24x24_patches"
+#retrieval_set_path: "retrieval/medical_object_classification/retrieval_set_1000000_cropped_clip-vit-large-patch14-336.pkl"
+
+use_retrieval: False # Whether or not to retrieve in-context examples
+retrieval_k: 5 # Number of retrieved in-context examples
+majority_vote_retrieval: False
+use_image_features: False # Concatenate ViT Image Features to LLM Input Embeddings (slow!)
+crop_image: False

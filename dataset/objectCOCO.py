@@ -14,20 +14,20 @@ from dataset.customRetrieval import RetrievalDataset
 class COCOObjectDataset(Dataset):
     # Path to instances.json
     # Path to COCO2014/COCO2017 train images
-    def __init__(self, config, split="train", patch_size=16, max_examples_per_class = 1000000):
+    def __init__(self, config, split="train", n_patches=16, max_examples_per_class = 1000000):
         super(COCOObjectDataset, self).__init__()
         self.split = split
         if "train" in split:
-            dataset_path = f"/data/ossowski/COCO2017/instruction_data/supervised_with_segmentations_train_object_detection_{patch_size}x{patch_size}.json"
+            dataset_path = os.path.join(f"{config['DATA_FOLDER']}", "COCO2017", "instruction_data", f"supervised_with_segmentations_train_object_detection_{n_patches}x{n_patches}.json")
         else:
-            dataset_path = f"/data/ossowski/COCO2017/instruction_data/supervised_with_segmentations_val_object_detection_{patch_size}x{patch_size}.json"
+            dataset_path = os.path.join(f"{config['DATA_FOLDER']}", "COCO2017", "instruction_data", f"supervised_with_segmentations_val_object_detection_{n_patches}x{n_patches}.json")
 
         self.config = config
         self.data = json.load(open(dataset_path))
         self.prompts = ["[obj] What is this?",
                         "[obj] What is this object?",
                         "[obj] Identify this object."]
-        self.patch_size = patch_size
+        self.n_patches = n_patches
         self.max_examples_per_class = max_examples_per_class
         self.class_counts = {}
         self.entries = self._load_dataset()
@@ -43,10 +43,7 @@ class COCOObjectDataset(Dataset):
                 retrieval_path = config["retrieval_set_path"]
             else:
                 retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
-            #retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{config["vision_encoder"].split("/")[-1]}.pkl'
-            print(retrieval_path)
-            #retrieval_path = "retrieval/object_classification/retrieval_set_1000000_1_clip-vit-large-patch14.pkl"
-            #retrieval_path = "retrieval/object_classification/retrieval_set_1000000_dinov2-large.pkl"
+
             with open(retrieval_path, 'rb') as f:
                 self.retrieval_data = pickle.load(f)
                 self.retrieval_keys = torch.FloatTensor(self.retrieval_data['keys']).to(self.config["device"])
@@ -82,15 +79,11 @@ class COCOObjectDataset(Dataset):
             segmentations = item["segmentations"]
             bboxes = item["bboxes"]
             segmentation_labels = item["segmentation_labels"]
-            full_segmentations = item["original_segmentations"]
-            class_types = item["class_types"]
-                
+            full_segmentations = item["original_segmentations"]                
             chunk = []
             
             for i, segmentation in enumerate(segmentations):
-                if "zeroshot" in self.split:
-                    if "train" in self.split and class_types[i] == "novel":
-                        continue
+                
                 bbox = bboxes[i]
                 seg = np.append(1, mask.decode(segmentation).flatten())
 
@@ -142,9 +135,7 @@ class COCOObjectDataset(Dataset):
             if c not in class_counts:
                 class_counts[c] = 0
             class_counts[c] += 1
-        
-        for key in class_counts:
-            class_counts[key] = round(class_counts[key] / len(self.entries), 2)
+
         return class_counts
 
     # Should take in argument k: how many closest objects to retrieve

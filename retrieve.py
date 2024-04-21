@@ -63,6 +63,11 @@ def main(args):
     logging.set_verbosity_error()
     with open(args.config, 'r') as file:
         config = yaml.safe_load(file)
+    
+    DATA_FOLDER = config["DATA_FOLDER"]
+    config['n_patches'] = 16
+    if "336" in config['vision_encoder']:
+        config['n_patches'] = 24
         
     config["batch_size"] = 1
 
@@ -83,22 +88,22 @@ def main(args):
     if args.train:
         print("Loading Dataset to Create Retrieval Features From ...")
         if config['task'] == 'object_classification':
-            dataset = COCOObjectDataset(config, split="train", patch_size=config['patch_size'], max_examples_per_class = config["examples_per_class"])
+            dataset = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = config["examples_per_class"])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'medical_object_classification':
-            dataset = CXR8Dataset(config, split="train", patch_size=config['patch_size'])
+            dataset = CXR8Dataset(config, split="train", n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == "open_vocab_object_classification":
-            dataset = LVISDataset(config, split="train", patch_size=config['patch_size'])
+            dataset = LVISDataset(config, split="train", n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == "refCOCOg":
             dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train")
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'image_captioning':
-            dataset = VRPDataset(patch_size=config['patch_size'])
+            dataset = VRPDataset(n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'counting':
-            dataset = CountCOCODataset(patch_size=config['patch_size'])
+            dataset = CountCOCODataset(n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         
 
@@ -158,19 +163,19 @@ def main(args):
                 
 
         if config['task'] == 'object_classification':
-            dataset = COCOObjectDataset(config, split="val", patch_size=config['patch_size'], max_examples_per_class = 1000000)
+            dataset = COCOObjectDataset(config, split="val", n_patches=config['n_patches'], max_examples_per_class = 1000000)
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'medical_object_classification':
-            dataset = CXR8Dataset(config, split="test", patch_size=config['patch_size'])
+            dataset = CXR8Dataset(config, split="test", n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == "open_vocab_object_classification":
-            dataset = LVISDataset(config, split="val", patch_size=config['patch_size'])
+            dataset = LVISDataset(config, split="val", n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'image_captioning':
-            dataset = VRPDataset(patch_size=config['patch_size'])
+            dataset = VRPDataset(n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'counting':
-            dataset = CountCOCODataset(patch_size=config['patch_size'])
+            dataset = CountCOCODataset(n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
 
         with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl', 'rb') as f:
@@ -178,36 +183,25 @@ def main(args):
         #print(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl')
         keys = data['keys']
         labels = data['values']
-        zeroshot_train_classes = json.load(open("dataset/seen.json", 'r'))
-        zeroshot_test_classes = json.load(open("dataset/unseen.json", 'r'))
         
         top_1 = 0
         top_5 = 0
         top_10 = 0
         majority_correct = 0
-        novel_total = 0
-        novel_correct = 0
-        base_total = 0
-        base_correct = 0
         correct_by_category = {}
         majority_correct_by_category = {}
         total_by_category = {}
 
-        data = json.load(open("/data/ossowski/COCO2017/annotations/instances_val2017.json"))
+        data = json.load(os.path.join(DATA_FOLDER, "COCO2017", "annotations", "instances_val2017.json"))
         coco_eval_mapping = {c['name']:c['id'] for c in data['categories']}
         json_results = []
-        json_novel_results = []
-        json_base_results = []
         dataset.stats()
 
         for b_num, batch in enumerate(tqdm(train_loader)):
   
-            masks = batch["vit_mask"]
             answers = batch['answer']
-            images = batch['path_to_image']
             image_id = batch['id'][0]
             bbox = batch['bbox'][0]
-            original_seg = batch['original_segmentation'][0]
     
             #if True:
             if b_num not in cache:
@@ -234,11 +228,6 @@ def main(args):
                     majority_correct_by_category[answers[0]] = 0
                 majority_correct_by_category[answers[0]] += 1
                 majority_correct += 1
-                if answers[0] in zeroshot_test_classes:
-                    novel_correct += 1
-                elif answers[0] in zeroshot_train_classes:
-                    base_correct += 1
-
 
             if answers[0] in predictions[:10]:
                 if answers[0] not in correct_by_category:
@@ -261,13 +250,6 @@ def main(args):
             d['bbox'] = bbox
 
             json_results.append(d)
-
-            if answers[0] in zeroshot_test_classes:
-                novel_total += 1
-                json_novel_results.append(d)
-            elif answers[0] in zeroshot_train_classes:
-                base_total += 1
-                json_base_results.append(d)
                 
         for category in sorted(correct_by_category, key = lambda x: total_by_category[x], reverse=True):
             print(f"{category}: {majority_correct_by_category.get(category, 0)/ total_by_category[category]:.3f}")
@@ -278,8 +260,9 @@ def main(args):
         print(f"Top 10: {top_10 / len(dataset)}")
         print(f"Majority Correct ({k}): {majority_correct / len(dataset):.5}")
 
- 
-        out_file = open("/data/ossowski/cocoapi/results/test.json", "w") 
+
+        os.makedirs("outputs", exist_ok=True)
+        out_file = open(os.path.join("outputs", "prediction_results.json"), "w") 
         json.dump(json_results, out_file) 
 
 
@@ -299,7 +282,6 @@ def main(args):
             print(f"Majority Correct ({i}): {majority_correct / len(dataset):.2}")
             performances[i] = round(majority_correct / len(dataset), 4)
         print(performances)
-
 
 
         os.makedirs(f"cache/{config['task']}", exist_ok=True)

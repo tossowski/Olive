@@ -63,9 +63,9 @@ def eval_object_classification(dataset, data):
     top_5_frequent_classes = sorted(class_amounts, key = lambda x: class_amounts[x], reverse=True)
     print(f"Top 5 Class Performance")
     for i, c in enumerate(top_5_frequent_classes):
-        percentage = class_amounts[c] / sum(class_amounts.values())
+        #percentage = class_amounts[c] / sum(class_amounts.values())
         performance = class_correct[c] / class_amounts[c]
-        most_common_mistake = sorted(mistakes[c].keys(), key = lambda x:mistakes[c][x], reverse=True)[0]
+        #most_common_mistake = sorted(mistakes[c].keys(), key = lambda x:mistakes[c][x], reverse=True)[0]
         print(f"{c}: {round(performance, 3)}")
         #print(f"'{c}' class which is {percentage * 100:.3}% of data: {performance:.2}. Most common mistake is {most_common_mistake}") 
     print(f"Overall Accuracy {correct / total:.3}")

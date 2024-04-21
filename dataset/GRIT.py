@@ -19,6 +19,8 @@ class GRITDataset(Dataset):
         self.data_root = data_root
         self.patch_size=patch_size
         self.data = None
+
+        # 21 is max
         for i in range(21):
             df = pd.read_parquet(os.path.join(data_root, f'coyo_{i}_snappy.parquet'), engine='pyarrow')
             if type(self.data) == None:
@@ -62,23 +64,31 @@ class GRITDataset(Dataset):
             #         continue
             # except requests.ConnectionError as e:
             #     continue
+            info = {}
+            info['height'] = entry['height']
+            info['width'] = entry['width']
+            
+            if entry['width'] < 16 or entry['height'] < 16:
+                continue
 
-            for chunk in entry['ref_exps']:
-                info = {}
-                info['height'] = entry['height']
-                info['width'] = entry['width']
-                info['chunk'] = chunk
-                if entry['width'] < 16 or entry['height'] < 16:
-                    continue
- 
-               
 
-                info['path_to_image'] = path_to_image
-                info['id'] = i
-                
-                info['question'] = "[obj] Describe this object."
-                info['answer'] = entry['caption'][int(chunk[0]):int(chunk[1])]
-                
+            info['path_to_image'] = path_to_image
+            info['id'] = i
+            objective = "LM"
+
+            if objective == "LM":
+                positions = [int(chunk[0]) for chunk in entry['ref_exps']]
+                #print(positions)
+                positions.sort(reverse=True)
+                #print(positions)
+                main_string = entry["caption"]
+                info['chunks'] = entry['ref_exps']
+                # Iterate over the positions and insert the smaller string
+                for pos in positions:
+                    main_string = main_string[:pos] + "[obj] " + main_string[pos:]
+                info['question'] = ""
+                info['answer'] = main_string
+
                 self.entries.append(info)
         return self.entries
 
@@ -122,14 +132,17 @@ class GRITDataset(Dataset):
 
     def __getitem__(self, index):
         entry = self.entries[index]
-
-
-        x_min, y_min, x_max, y_max = entry['chunk'][2:6]
-        x_min = x_min * entry['width']
-        x_max = x_max * entry['width']
-        y_min = y_min * entry['height']
-        y_max = y_max * entry['height']
-        entry['vit_mask'] = self._get_ViT_mask([x_min, y_min, x_max, y_max], entry['height'], entry['width'])
-        entry['bbox'] = [x_min, y_min, x_max - x_min, y_max-y_min]
+        vit_masks = []
+        bboxes = []
+        for chunk in entry['chunks']:
+            x_min, y_min, x_max, y_max = chunk[2:6]
+            x_min = x_min * entry['width']
+            x_max = x_max * entry['width']
+            y_min = y_min * entry['height']
+            y_max = y_max * entry['height']
+            vit_masks.append(self._get_ViT_mask([x_min, y_min, x_max, y_max], entry['height'], entry['width']))
+            bboxes.append([x_min, y_min, x_max - x_min, y_max-y_min])
+        entry['vit_mask'] = np.stack(vit_masks, axis = 0)
+        entry['bbox'] = bboxes
 
         return entry
