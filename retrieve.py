@@ -192,7 +192,7 @@ def main(args):
         majority_correct_by_category = {}
         total_by_category = {}
 
-        data = json.load(os.path.join(DATA_FOLDER, "COCO2017", "annotations", "instances_val2017.json"))
+        data = json.load(open(os.path.join(DATA_FOLDER, "COCO2017", "annotations", "instances_val2017.json")))
         coco_eval_mapping = {c['name']:c['id'] for c in data['categories']}
         json_results = []
         dataset.stats()

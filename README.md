@@ -22,43 +22,8 @@ pip install -r requirements.txt
 ```
 
 ### Config File
-This is the most important file which controls the experiments. An example is shown below along with explanation for each parameter. It is located in the `configs/config.yaml` file:
-```
-DATA_FOLDER: "/data/ossowski/OLIVE" # Path to folder containing all data
+This is the most important file which controls the experiments. We have several examples in the `configs` folder for different experiments.
 
-vision_encoder: "openai/clip-vit-large-patch14-336" # Also can be "openai/clip-vit-large-patch14"
-
-llm_model: "gpt2" # Can also be "meta-llama/Llama-2-7b-chat-hf"
-
-freeze_vision_encoder: True # Freeze vision encoder weights
-freeze_llm: False # Freeze decoder LLM weights (otherwise use LORA)
-save_folder: "./checkpoints" # Where to save checkpoints
-
-task: "object_classification" # Also can be "refCOCOg" or "medical_object_classification"
-
-system_prompt: "You are a helpful vision assistant trained to help people analyze images." # System Prompt for the LLM decoder
-device: "cuda:0" # Which GPU to use for putting data batches on. 
-
-# Various hyperparameters
-batch_size: 2
-learning_rate: 0.00002
-early_stopping: False
-check_loss_steps: 1000 # How often to save the model and log progress
-examples_per_class: 1000000 # Only lower if you want to train on less objects
-pretrained_object_encoder_checkpoint: "None"
-n_epochs: 1
-
-#load_model_path: "./checkpoints/llama_2_finetuned_checkpoints/object_classification/frozen_llm_clip_retrieval_16x16_patches" # Uncomment if you want to load weights from a specific checkpoint (ignoring the task set above). Useful for the domain adaptation testing.
-
-#retrieval_set_path: "retrieval/object_classification/retrieval_set_1000000_clip-vit-large-patch14-336.pkl" # Similar to load_model_path, uncomment and replace with the path to the retrieval set you would like to use.
-
-use_retrieval: False # Whether or not to retrieve in-context examples
-retrieval_k: 5 # Number of retrieved in-context examples
-#additional_retrieval_examples: "./additional_examples" # Uncomment if you would like to add your own retrieval examples. See the additional_examples folder to see the structure
-majority_vote_retrieval: False
-use_image_features: False # Concatenate ViT Image Features to LLM Input Embeddings (slow!) 
-crop_image: False
-```
 
 ### Datasets
 Our experiments in our paper mainly involve COCO object detection and refCOCOg datasets. You only need to download COCO images for this. However, we also experiment with domain adaptation on medical images using the Chest X-Ray (CXR8) Dataset. You can download all of this COCO and medical data using our setup script. Make sure to set the `DATA_FOLDER` path in the config file first. You will have to download the **BBox_List_2017.csv**, **train_val_list.txt**, and **test_list.txt** files from their website: https://nihcc.app.box.com/v/ChestXray-NIHCC
@@ -113,10 +78,10 @@ To test the performance of retrieval only methods, you can then run
 python retrieve.py --test
 ```
 ### Training
-After setting up the config file in `configs/config.yaml`, you can train a model using
+After setting up the config file in `configs/config.yaml`, you can train a model using that config. For example, to do object classification, you may try
 
 ```python
-python main.py --train
+python main.py --train --config configs/object_classification.yaml
 ```
 
 Intermediate checkpoints are stored in the checkpoints folder, where you can also see the loss over parameter updates graph.
