@@ -6,12 +6,13 @@ from eval.pycocoevalcap.cider.cider import Cider
 from eval.pycocoevalcap.spice.spice import Spice
 from dataset.RefCOCO import RefCOCODataset
 import json
+import os
 from torch.utils.data import DataLoader
 
 
-def eval_object_classification(dataset, data):
+def eval_object_classification(dataset, data, config):
     json_results = []
-    coco_data = json.load(open("/data/ossowski/COCO2017/annotations/instances_val2017.json"))
+    coco_data = json.load(open(os.path.join(config['DATA_FOLDER'], "COCO2017", "annotations", f"instances_val2017.json")))
     coco_eval_mapping = {c['name']:c['id'] for c in coco_data['categories']}
 
     class_names = sorted(dataset.class_counts.keys())
@@ -56,7 +57,7 @@ def eval_object_classification(dataset, data):
         class_amounts[answer] += 1
         total += 1
 
-    out_file = open("/data/ossowski/cocoapi/results/test.json", "w") 
+    out_file = open("./outputs/test.json", "w") 
     json.dump(json_results, out_file) 
     print(f"Performance")
     print(f"Overall Accuracy {correct / total:.3}")

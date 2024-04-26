@@ -1,4 +1,4 @@
-# Object Level In-Context Visual Embeddings (OLIVE)
+# <img align="middle" src="images/olive_logo.png" width="80"/>  Object Level In-Context Visual Embeddings (OLIVE)
 
 This repository contains the code for the paper "Object Level In-Context Visual Embeddings (OLIVE)". The repo has code to train the models described in the paper, which can be achieved by following the instructions below.
 
@@ -9,9 +9,6 @@ This repository contains the code for the paper "Object Level In-Context Visual 
 * Our model does not prepend the standard array of image patch features to the LLM decoder input to speed up training and inference and be memory-friendly. This loses some information from the background, but we have found that the model can still understand object level detail and display scene content awareness.
 
 * We experiment with object level retrieval to generalize to unseen visual concepts.
-
-More details can be found in the paper. We also illustrate example usage in the gif below:
-
 
 
 ### Setup
@@ -71,14 +68,18 @@ data
 ### Retrieval Set Preparation
 We have a separate script to prepare the retrieval set to train models with retrieval capability. To prepare the retrieval set, set the task to be `object_classification` in the config.yaml file and run the following script:
 ```
-python retrieve.py --train
+python retrieve.py --train --config <path_to_config_file>
 ```
 This will create a .pkl file in a folder called `retrieval`.
 
 To test the performance of retrieval only methods, you can then run
 ```
-python retrieve.py --test
+python retrieve.py --test --config <path_to_config_file>
 ```
+
+#### Custom Retrieval Set
+To prepare your own custom retrieval set, follow the format shown in the `additional_examples` folder. You may include all your desired retrieval images in the folder along with their labels in a file called `labels.txt`. To generate the retrieval set, run the scripts above, and make sure to put the path to the folder in `additional_retrieval_examples` in the config file.
+
 ### Training
 After setting up the config file in `configs/config.yaml`, you can train a model using that config. For example, to do object classification, you may try
 
@@ -89,13 +90,15 @@ python main.py --train --config configs/object_classification.yaml
 Intermediate checkpoints are stored in the checkpoints folder, where you can also see the loss over parameter updates graph.
 
 ### Testing and Demo
-We have some evaluation scripts for the object classification and region description tasks. For most testing, you do not need to change the `config.yaml` file from the training configuration. However, for the domain adaptation experiment, make sure to set the task to the downstream task (e.g. `medical_object_classification`), and type in the path of the model checkpoint you want to load for `load_model_path`.
+We have some evaluation scripts for the object classification and region description tasks. For most testing, you do not need to change the `config.yaml` file from the training configuration. However, for the domain adaptation experiment, make sure to set the task to the downstream task (e.g. `medical_object_classification`), and type in the path of the pretrained model checkpoint you want to load for `load_model_path`.
 
 You can test the model (after setting up the `config.yaml`) using:
 
 ```python
-python main.py --test
+python main.py --test --config <path_to_config_file>
 ```
+
+For the object classification task, if you want to check the mAP metric commonly used by COCO, please refer to [their API](https://github.com/cocodataset/cocoapi/tree/master). Our code should output a `test.json` file in the `outputs` folder which you can directly use with the API to evaluate mAP.
 
 After training, you can also test the model qualitatively using our demo notebook. Run the cells in the `demo.ipynb` notebook to open the gradio interface:
 

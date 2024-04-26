@@ -238,7 +238,7 @@ def main(args):
         elif config['task'] == 'image_captioning':
             dataset = VRPDataset("test", n_patches=config['n_patches'])
         elif config['task'] == "refCOCOg":
-            dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", n_patches=config["n_patches"], split="val")
+            dataset = RefCOCODataset(os.path.join(DATA_FOLDER, "COCO2017", "refcocog"), os.path.join(DATA_FOLDER, "COCO2017", "train2017"), n_patches=config["n_patches"], split="val")
         elif config['task'] == 'counting':
             dataset = CountCOCODataset(n_patches=config['n_patches'])
         elif config['task'] == 'medical_object_classification':
@@ -270,7 +270,6 @@ def main(args):
                 retrieval_dataset = VRPDataset(n_patches=config['n_patches'])
             elif config['task'] == 'counting':
                 retrieval_dataset = CountCOCODataset(n_patches=config['n_patches'])
-            
             elif config['task'] == 'medical_object_classification':
                 retrieval_dataset = CXR8Dataset(config, split="train", n_patches=config["n_patches"])
             elif config['task'] == "refCOCOg":
@@ -293,11 +292,11 @@ def main(args):
             with open(OUTPUT_SAVE_PATH, "rb") as f:
                 predictions = pickle.load(f)
             if config["task"] == "object_classification":
-                eval_object_classification(dataset, predictions)
+                eval_object_classification(dataset, predictions, config)
             elif config["task"] == "refCOCOg":
                 eval_captioning(dataset, predictions)
             elif config["task"] == "ALL":
-                eval_object_classification(dataset, predictions)
+                eval_object_classification(dataset, predictions, config)
             #exit()
 
         model.load()
@@ -346,7 +345,9 @@ def main(args):
                 responses[i]["answer"] = batch['answer'][0].lower()
                 responses[i]["prediction"] = output
 
-                # print(responses[i])
+                if output == answers[0].lower():
+                    print(responses[i])
+                    print(batch['bbox'][0])
                 # print(correct/total, exact_match/total)
 
         with open(OUTPUT_SAVE_PATH, "wb") as f:
