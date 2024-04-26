@@ -1,4 +1,4 @@
-# <img align="middle" src="images/olive_logo.png" width="80"/>  Object Level In-Context Visual Embeddings (OLIVE)
+## <img align="middle" src="images/olive_logo.png" width="80"/>  Object Level In-Context Visual Embeddings (OLIVE)
 
 This repository contains the code for the paper "Object Level In-Context Visual Embeddings (OLIVE)". The repo has code to train the models described in the paper, which can be achieved by following the instructions below.
 
