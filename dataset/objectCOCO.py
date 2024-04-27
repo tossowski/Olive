@@ -53,7 +53,7 @@ class COCOObjectDataset(Dataset):
                 print(f'Loaded {len(self.retrieval_keys)} examples from {retrieval_path}')
 
             if "additional_retrieval_examples" in config:
-                path_to_additional_examples = os.path.join(config["additional_retrieval_examples"], config["vision_encoder"].split("/")[-1] + ".pkl")
+                path_to_additional_examples = os.path.join(config["additional_retrieval_examples"], f'{cropped}{config["vision_encoder"].split("/")[-1]}' + ".pkl")
                 dataset = RetrievalDataset(config)
                 with open(path_to_additional_examples, "rb") as f:
                     data = pickle.load(f)
@@ -67,6 +67,8 @@ class COCOObjectDataset(Dataset):
                 self.retrieval_labels.extend(self.additional_retrieval_labels)
                 self.retrieval_keys = torch.cat((self.retrieval_keys, self.additional_retrieval_keys), axis = 0)
                 self.entries.extend(dataset.entries)
+                #print(len(self.entries))
+                #print(self.retrieval_keys.shape)
                 
 
                 
@@ -144,15 +146,19 @@ class COCOObjectDataset(Dataset):
     def retrieve_closest(self, object_features, k, train_phase = True, b_num=-1):
  
         dist_matrix = (object_features @ self.retrieval_keys.T)
-
+        #print(object_features & self.retrieval_keys[-10,:].T)
         if train_phase:
             closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 1:1+k]
         else:
             closest_indices = torch.argsort(dist_matrix, axis = -1, descending=True)[:, 0:k]
 
-
+        #print(object_features @ self.retrieval_keys[-10:, :].T)
+        #print(torch.argsort(dist_matrix, axis = -1, descending=True)[:, 0:k])
         similarity_scores = [[round(dist_matrix[i, x].item(), 2) for x in closest_indices[i,:]] for i in range(len(closest_indices))]
+        #print(similarity_scores)
         if self.retrieval_idx:
+            #retrieved_info = [[self.entries[self.retrieval_idx[-1]], self.entries[self.retrieval_idx[-1]], self.entries[self.retrieval_idx[-2]], self.entries[self.retrieval_idx[-3]], self.entries[self.retrieval_idx[-4]]]]
+            print("here")
             retrieved_info = [[self.entries[self.retrieval_idx[x]] for x in closest_indices[i,:]] for i in range(len(closest_indices))]
         else:
             retrieved_info = [[self.entries[x] for x in closest_indices[i,:]] for i in range(len(closest_indices))]

@@ -21,6 +21,7 @@ import argparse
 import os
 from collections import Counter
 from pycocotools import mask as _mask
+from matplotlib import pyplot as plt
 
 import json
 
@@ -38,10 +39,12 @@ def get_object_feature(batch, processor, model, config):
             img[~m] = np.array([255,255,255])
         bbox = [int(x) for x in bbox]
         img = img[bbox[1]: bbox[1] + bbox[3], bbox[0]:bbox[0] + bbox[2]]
+        
         h, w, _ = img.shape
         if h < 2 or w < 2:
             return None
         images = [Image.fromarray(np.uint8(img)).convert('RGB')]
+
     else:
         images = [Image.open(x).convert('RGB') for x in images]
 
@@ -78,7 +81,6 @@ def main(args):
 
     if "clip" in config["vision_encoder"]:
         model = CLIPVisionModel.from_pretrained(config["vision_encoder"]).to(config["device"])
-        model.eval()
         processor = CLIPImageProcessor.from_pretrained(config["vision_encoder"])
     elif "dino" in config["vision_encoder"]:
         processor = AutoImageProcessor.from_pretrained('facebook/dinov2-large')
@@ -113,7 +115,7 @@ def main(args):
         retrieval_index = []
         retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
         if "additional_retrieval_examples" in config:
-            retrieval_path = os.path.join(config["additional_retrieval_examples"], config["vision_encoder"].split("/")[-1] + ".pkl")
+            retrieval_path = os.path.join(config["additional_retrieval_examples"], f'{cropped}{config["vision_encoder"].split("/")[-1]}' + ".pkl")
             dataset = RetrievalDataset(config)
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         
@@ -142,8 +144,11 @@ def main(args):
         retrieval_set['values'] = labels
         retrieval_set['idx'] = retrieval_index
 
+        print(retrieval_set['keys'][-1,:])
+
         os.makedirs(f"retrieval/{config['task']}", exist_ok=True)
         with open(retrieval_path, 'wb') as f:
+            print(retrieval_path)
             pickle.dump(retrieval_set, f)
 
     elif args.test:
@@ -180,7 +185,7 @@ def main(args):
 
         with open(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl', 'rb') as f:
             data = pickle.load(f)
-        #print(f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl')
+
         keys = data['keys']
         labels = data['values']
         

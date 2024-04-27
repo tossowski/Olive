@@ -9,7 +9,7 @@ import numpy as np
 
 from PIL import Image
 from io import BytesIO
-from transformers import AutoModelForCausalLM, LlamaTokenizer, CLIPImageProcessor, AutoTokenizer, AutoProcessor, LlavaForConditionalGeneration, AutoImageProcessor, AutoModel
+from transformers import AutoModelForCausalLM, LlamaTokenizer, CLIPImageProcessor, CLIPVisionModel, AutoTokenizer, AutoProcessor, LlavaForConditionalGeneration, AutoImageProcessor, AutoModel
 from collections import Counter
 from models.object_encoder import ObjectEncoder
 from peft import PeftModel, LoraConfig, prepare_model_for_kbit_training, get_peft_model
@@ -73,6 +73,7 @@ class VisionLLaMA(nn.Module):
             self.object_encoder.projector = self.llama_model.multi_modal_projector
             self.object_encoder.processor = self.image_processor
             self.object_encoder.model = self.llama_model.vision_tower
+            self.object_encoder.model.requires_grad_(False)
             self.object_encoder.projector.requires_grad_(False)
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
             self.tokenizer.padding_side = "right"
@@ -263,7 +264,6 @@ class VisionLLaMA(nn.Module):
  
         if self.config["use_retrieval"] and len(segmentations) > 0:
             if self.config["crop_image"]:
-                print("Retrieving with cropped images")
                 prompts, retrieved_masks, retrieved_images = self.get_retrieval_prompt(segmentations, images, b_num=b_num, cropped_images=cropped_images)
             else:
                 prompts, retrieved_masks, retrieved_images = self.get_retrieval_prompt(segmentations, images, b_num=b_num)
@@ -350,11 +350,12 @@ class VisionLLaMA(nn.Module):
             # processor = AutoImageProcessor.from_pretrained('facebook/dinov2-large')
             # model = AutoModel.from_pretrained('facebook/dinov2-large').to(self.config["device"])
             # model.eval()
-
+            
             inputs = self.object_encoder.processor(images=[self.load_image(x) for x in cropped_images], return_tensors="pt").to(self.config["device"])
             image_forward_outs = self.object_encoder.model(inputs['pixel_values'], output_hidden_states=True)
             object_feature = image_forward_outs.hidden_states[-1][0,0,:]
             object_feature /= object_feature.norm(dim=-1, keepdim=True)
+            print(object_feature)
             object_features.append(object_feature)
         else:
             inputs = self.object_encoder.processor(images=[self.load_image(x) for x in images], return_tensors="pt").to(self.config["device"])
