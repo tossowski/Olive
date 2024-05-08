@@ -12,12 +12,11 @@ This repository contains the code for the paper "Object Level In-Context Visual 
 
 
 ### Setup
-We highly recommend setting up an anaconda environment with the required dependencies using the code below:
+We highly recommend setting up an anaconda environment and activating it with the required dependencies using the code below:
 
 ```python
-conda create --name OLIVE
-conda activate OLIVE
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate olive
 ```
 
 ### Config File
@@ -79,6 +78,17 @@ python retrieve.py --test --config <path_to_config_file>
 
 #### Custom Retrieval Set
 To prepare your own custom retrieval set, follow the format shown in the `additional_examples` folder. You may include all your desired retrieval images in the folder along with their labels in a file called `labels.txt`. To generate the retrieval set, run the scripts above, and make sure to put the path to the folder in `additional_retrieval_examples` in the config file.
+
+### Pretrained Checkpoints
+If you would like to try out the some of the models we trained, you can find them at these links. To use them, you can download them with `git lfs` and then refer to the download folder in the config file under the `load_model_path` setting.
+
+| Name | Description |
+| ------------- | ------------- |
+| [OLIVE-G-Classification](https://huggingface.co/tossowski/OLIVE-G-Classification) | Model trained on object classification |
+| [OLIVE-RG-Classification](https://huggingface.co/tossowski/OLIVE-RG-Classification) | Model trained with retrieval on object classification |
+| [OLIVE-G-Captioning](https://huggingface.co/tossowski/OLIVE-G-Captioning) | Model trained on referring expression generation |
+| [OLIVE-RG-Captioning](https://huggingface.co/tossowski/OLIVE-RG-Captioning) | Model trained with retrieval on referring expression generation |
+
 
 ### Training
 After setting up the config file in `configs/config.yaml`, you can train a model using that config. For example, to do object classification, you may try

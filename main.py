@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from transformers import logging
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from models.visionllama import VisionLLaMA
+from models.olive import OLIVE
 
 import pickle
 import yaml
@@ -101,9 +101,9 @@ def main(args):
             else:
                 retrieval_dataset = dataset
             # b_num is for caching
-            model = VisionLLaMA(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], b_num=b))    
+            model = OLIVE(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], b_num=b))    
         else:
-            model = VisionLLaMA(config, retrieval_fn = None)   
+            model = OLIVE(config, retrieval_fn = None)   
 
         print(f"Model SAVE/LOAD path is {model._get_save_path()}") 
         model.prepare_for_training()
@@ -275,9 +275,9 @@ def main(args):
             elif config['task'] == "refCOCOg":
                 retrieval_dataset = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = config["examples_per_class"])
 
-            model = VisionLLaMA(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], train_phase=False, b_num=b))    
+            model = OLIVE(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], train_phase=False, b_num=b))    
         else:
-            model = VisionLLaMA(config, retrieval_fn = None)    
+            model = OLIVE(config, retrieval_fn = None)    
 
         # Ideally make this cleaner. The load_raw = True is so that the save path includes "retrieval"
         # basically the name of the model constructed from the config, which includes the downstream task
