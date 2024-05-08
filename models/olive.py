@@ -346,6 +346,7 @@ class OLIVE(nn.Module):
             image_features.append(self.llama_model.multi_modal_projector(transformer_output))
   
         labels = torch.tensor(self.tokenizer(full_text_input, padding=True).input_ids, dtype=torch.long).to(self.config["device"])
+        print(full_text_input)
         final_input, label_input, attention_mask = self.embed_with_special_tokens(full_text_input, object_embeddings, labels=labels, image_features=image_features)
         
         if return_retrieved_info:
@@ -531,13 +532,7 @@ class OLIVE(nn.Module):
                     SAVE_PATH).to(self.config["device"])
             return
         
-        if "gpt2" not in self.config["llm_model"]:
-            self.llama_model = PeftModel.from_pretrained(self.llama_model, SAVE_PATH)
-        else:
-            #self.llama_model = PeftModel.from_pretrained(self.llama_model, SAVE_PATH)
-            self.llama_model = AutoModelForCausalLM.from_pretrained(
-                    SAVE_PATH).to(self.config["device"])
-        
+        self.llama_model = PeftModel.from_pretrained(self.llama_model, SAVE_PATH)
         
 
     def save(self):
