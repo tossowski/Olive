@@ -88,8 +88,20 @@ def main(args):
         model.eval()
 
     if args.train:
+        
+        object_feats = []
+        labels = []
+        image_ids = []
+        retrieval_index = []
+        retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
+        
         print("Loading Dataset to Create Retrieval Features From ...")
-        if config['task'] == 'object_classification':
+        if "additional_retrieval_examples" in config:
+            retrieval_path = os.path.join(config["additional_retrieval_examples"], f'{cropped}{config["vision_encoder"].split("/")[-1]}' + ".pkl")
+            dataset = RetrievalDataset(config)
+            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
+
+        elif config['task'] == 'object_classification':
             dataset = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = config["examples_per_class"])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'medical_object_classification':
@@ -109,16 +121,6 @@ def main(args):
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         
 
-        object_feats = []
-        labels = []
-        image_ids = []
-        retrieval_index = []
-        retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
-        if "additional_retrieval_examples" in config:
-            retrieval_path = os.path.join(config["additional_retrieval_examples"], f'{cropped}{config["vision_encoder"].split("/")[-1]}' + ".pkl")
-            dataset = RetrievalDataset(config)
-            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
-        
         print(f'The retrieval features will be saved in {retrieval_path}')
         if config["crop_image"]:
             print("Will crop objects to create the feature")
