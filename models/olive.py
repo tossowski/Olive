@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import requests
 import os
 import PIL
-import time
 import numpy as np
 
 from PIL import Image
@@ -13,7 +12,6 @@ from transformers import AutoModelForCausalLM, LlamaTokenizer, CLIPImageProcesso
 from collections import Counter
 from models.object_encoder import ObjectEncoder
 from peft import PeftModel, LoraConfig, prepare_model_for_kbit_training, get_peft_model
-
 
 
 class OLIVE(nn.Module):
@@ -31,13 +29,11 @@ class OLIVE(nn.Module):
             response = requests.get(image_file)
             image = Image.open(BytesIO(response.content)).convert('RGB')
         else:
-            #print(image_file)
             image = Image.open(image_file).convert('RGB')
-            #print(np.array(image).shape)
         return image
 
-    # Retrieval function a function which takes in query object features and returns
-    # information about retrieved objects.
+    # Retrieval function: a function which takes in query object features and returns
+    # information about retrieved objects. See the dataset classes for implementation
     def __init__(self, config, retrieval_fn = None):
         super().__init__()
         self.config = config
@@ -79,7 +75,8 @@ class OLIVE(nn.Module):
             self.tokenizer.padding_side = "right"
             assert self.config["n_patches"] == 24
         
-        # Add special token for object
+        # Add special token for object. Gets replaced with obj vector during
+        # tokenization in embed_with_special_tokens
         self.tokenizer.add_tokens(["[obj]"])
 
         # This token is a dummy to help with finding the start of generation
@@ -103,10 +100,7 @@ class OLIVE(nn.Module):
         if self.config["freeze_llm"]:
             print("The LLM is FROZEN")
             self.llama_model.requires_grad_(False)
-            # if "gpt2" in base_model:
-            #     self.llama_model.lm_head.requires_grad_(True)
-        #print(f"There are {self.count_trainable_parameters()} trainable parameters")
-        #print(f"It has {self.count_trainable_parameters()} trainable parameters")
+
 
     def prepare_for_training(self):
         if not self.config["freeze_llm"] and "gpt2" not in self.config["llm_model"]:
@@ -127,7 +121,6 @@ class OLIVE(nn.Module):
                 "lm_head"]
             )
 
-            self.llama_model = prepare_model_for_kbit_training(self.llama_model)
             self.llama_model = get_peft_model(self.llama_model, peft_config)
             self.llama_model.print_trainable_parameters()
         else:
@@ -142,14 +135,7 @@ class OLIVE(nn.Module):
         tokenizer_output = self.tokenizer(sentences, padding=True)
         attention_mask = torch.tensor(tokenizer_output.attention_mask, dtype=torch.long).to(self.config["device"])
         batch_tokens = torch.tensor(tokenizer_output.input_ids, dtype=torch.long).to(self.config["device"])
-        #print(sentences)
 
-        #binary_tensor = list((batch_tokens[0] == 32001).int())
-        #print(batch_tokens)
-        #print(binary_tensor.index(1))
-        #tokenizer_output = self.tokenizer(['banana'], padding=True)
-        #test = torch.tensor(tokenizer_output.input_ids, dtype=torch.long).to(self.config["device"])
-        #print(test)
         if len(image_features) > 0:
             image_features = torch.cat(image_features, dim = 0).to(self.config["device"])
             input_ids = torch.tensor(self.tokenizer(sentences, padding=True).input_ids, dtype=torch.long).to(self.config["device"])
@@ -172,7 +158,6 @@ class OLIVE(nn.Module):
 
             final_image_input = inputs_embeds[:, 1:(self.config["n_patches"] ** 2) + 2, :]
 
-        
 
         embed_layer = self.llama_model.get_input_embeddings().to(self.config["device"])
 
@@ -247,7 +232,6 @@ class OLIVE(nn.Module):
                 if self.config["use_image_features"]:
                     cur_new_labels[1:(self.config["n_patches"] ** 2) + 2] = -100
                 new_labels.append(cur_new_labels)
-            
         
         new_input_embeds = torch.stack(new_embeds, dim=0)
         new_attn_mask = torch.stack(new_attn_mask, dim=0)
@@ -268,7 +252,8 @@ class OLIVE(nn.Module):
         return new_input_embeds.to(self.config["device"]), new_labels, new_attn_mask.to(self.config["device"])
 
     def prepare_input(self, segmentations, images, sentences, labels=None, return_retrieved_info = False, b_num=0, cropped_images=[]):
- 
+
+        # Augment prompt with retrieved object vectors and images
         if self.config["use_retrieval"] and len(segmentations) > 0:
             if self.config["crop_image"]:
                 prompts, retrieved_masks, retrieved_images = self.get_retrieval_prompt(segmentations, images, b_num=b_num, cropped_images=cropped_images)
@@ -284,14 +269,15 @@ class OLIVE(nn.Module):
                 val = segmentations[i]
                 if len(segmentations[i].shape) == 1:
                     val = torch.unsqueeze(segmentations[i], 0).to(self.config["device"])
-                #print(segmentations[i].shape, retrieved_masks[i].shape)
                 new_segs[i] = torch.cat((retrieved_masks[i], val), axis = 0)
 
                 if type(images[i]) == list:
                     images[i] = retrieved_images[i] + images[i]
                 else:
                     images[i] = retrieved_images[i] + [images[i]]
+
             segmentations = new_segs
+
         
         for i in range(len(images)):
             if type(images[i]) == list:
@@ -299,6 +285,7 @@ class OLIVE(nn.Module):
             else:
                 images[i] = [self.load_image(images[i])]
 
+        
         if labels == None:
             if "llama" in self.config["llm_model"]:
                 labels = [" [/INST] [start]" for sent in sentences]
@@ -306,7 +293,6 @@ class OLIVE(nn.Module):
                 labels = [" [start]" for sent in sentences]
             elif "llava" in self.config["llm_model"]:
                 labels = ["\nASSISTANT: " for _ in sentences]
-            #print(labels)
         else:
             if "llama" in self.config["llm_model"]:
                 sentences = [sent + " [/INST] " for sent in sentences]
@@ -316,11 +302,12 @@ class OLIVE(nn.Module):
             elif "llava" in self.config["llm_model"]:
                 labels = ["\nASSISTANT: " + label for label in labels]
 
-        #print(labels)
+        
         full_text_input = [self.prompt_text + sentences[i] + labels[i] for i in range(len(sentences))]
         object_embeddings = []
         image_features = []
    
+        # Get object features based on the masks
         if len(segmentations) > 0:
             for i in range(len(segmentations)):
                 inputs = self.object_encoder.processor(images=images[i], return_tensors="pt").to(self.config["device"])
@@ -346,40 +333,46 @@ class OLIVE(nn.Module):
             image_features.append(self.llama_model.multi_modal_projector(transformer_output))
   
         labels = torch.tensor(self.tokenizer(full_text_input, padding=True).input_ids, dtype=torch.long).to(self.config["device"])
-        print(full_text_input)
+        
+        # Replace obj tokens with their object vector representation
         final_input, label_input, attention_mask = self.embed_with_special_tokens(full_text_input, object_embeddings, labels=labels, image_features=image_features)
         
         if return_retrieved_info:
             return final_input, label_input, attention_mask, prompts, retrieved_masks, retrieved_images
         return final_input, label_input, attention_mask
 
+    # Returns the
+    # prompts: Few shot raw text prompts
+    # masks: List of ViT object binary mask of shape (retrieval_k, patch_size ** 2 + 1)
+    # all_images: List of list of images. Each inner list has length retrieval_k
     def get_retrieval_prompt(self, mask, images, b_num = 0, cropped_images = []):
         object_features = []
 
         if len(cropped_images) > 0:
-            # processor = AutoImageProcessor.from_pretrained('facebook/dinov2-large')
-            # model = AutoModel.from_pretrained('facebook/dinov2-large').to(self.config["device"])
-            # model.eval()
-            
-            inputs = self.object_encoder.processor(images=[self.load_image(x) for x in cropped_images], return_tensors="pt").to(self.config["device"])
+            inputs = self.object_encoder.processor(images=[self.load_image(x[0]) if type(x) == list else self.load_image(x) for x in images], return_tensors="pt").to(self.config["device"])
             image_forward_outs = self.object_encoder.model(inputs['pixel_values'], output_hidden_states=True)
             object_feature = image_forward_outs.hidden_states[-1][0,0,:]
             object_feature /= object_feature.norm(dim=-1, keepdim=True)
-            print(object_feature)
             object_features.append(object_feature)
         else:
-            inputs = self.object_encoder.processor(images=[self.load_image(x) for x in images], return_tensors="pt").to(self.config["device"])
+
+            # For input questions with multiple objects (type(x) == list), for now assume from the same image
+            inputs = self.object_encoder.processor(images=[self.load_image(x[0]) if type(x) == list else self.load_image(x) for x in images], return_tensors="pt").to(self.config["device"])
             
             image_forward_outs = self.object_encoder.model(inputs['pixel_values'], output_hidden_states=True)
 
             if type(mask) == list:
-                mask = torch.stack(mask, axis = 0)[:, 1:]
+                mask_copy = mask.copy()
+                for i, m in enumerate(mask_copy):
+                    if len(m.shape) > 1:
+                        mask_copy[i] = m[0]
+                mask_copy = torch.stack(mask_copy, axis = 0)[:, 1:]
             else:
-                mask = mask[:, 1:]
+                mask_copy = mask[:, 1:]
 
             object_features = []
-            for i in range(len(mask)):
-                image_feat = image_forward_outs.hidden_states[-1][i,1:,:][mask[i]]
+            for i in range(len(mask_copy)):
+                image_feat = image_forward_outs.hidden_states[-1][i,1:,:][mask_copy[i]]
                 object_feature = torch.mean(image_feat, dim = 0)
                 object_feature /= object_feature.norm(dim=-1, keepdim=True)
                 object_features.append(object_feature)
@@ -389,7 +382,6 @@ class OLIVE(nn.Module):
         prompts = []
         masks = []
         all_images = []
-        #print(closest_entries, similarity_scores)
 
         for i in range(len(closest_entries)):
             entries = closest_entries[i]
@@ -411,30 +403,24 @@ class OLIVE(nn.Module):
                 images.append(entry["path_to_image"])
             prompt += "\n"
             prompts.append(prompt)
-            
-            #print(torch.stack(segmentations, axis = 0).shape)
             masks.append(torch.stack(segmentations, axis = 0))
             all_images.append(images)
-        #print(torch.stack(masks, axis = 0).shape)
-        #print(prompts[0])
-        return prompts, masks, all_images
 
-        #print(closest_entries)
+
+        return prompts, masks, all_images
 
     # Sentences: list of strings (questions)
     # Labels: List of strings (the answers)
     # Image: list of list of paths to images
-    # Segmentations: List of list of Binary 16x16 mask
+    # Segmentations: List of (n_segmentations, patch_size ** 2 + 1)-shape tensors.
+    # A training example may have multiple object vectors in the prompt
     def forward(self, segmentations, images, sentences, labels=None, output_hidden_states=False):
         final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels)
         
+        # Mask up to start decoding token so it doesn't count to loss
         for i in range(len(label_input)):
             idx = (label_input[i] == self.decode_start_token).nonzero(as_tuple=True)[0][-1]
-            #print((label_input[i] == self.decode_start_token).nonzero(as_tuple=True))
-
-            #print(idx)
             label_input[i, :idx + 1] = -100
-        #print(label_input)
 
         return self.llama_model(inputs_embeds = final_input, labels = label_input, attention_mask=attention_mask, output_hidden_states=output_hidden_states)
 
@@ -447,11 +433,7 @@ class OLIVE(nn.Module):
             final_input, label_input, attention_mask = self.prepare_input(segmentations, images, sentences, labels=None, b_num=b_num, cropped_images = cropped_images)
         
         out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=100, top_p=0.0, top_k=1)
-        #out = self.llama_model.generate(inputs_embeds = final_input, attention_mask = attention_mask, max_new_tokens=30, temperature=1)
-
- 
         decoded_output = self.tokenizer.batch_decode(out, skip_special_tokens=True)
-        #decoded_output = self.tokenizer.batch_decode(out)
 
         if len(decoded_output) == 1:
             decoded_output = decoded_output[0]
@@ -494,9 +476,7 @@ class OLIVE(nn.Module):
 
         if self.config["use_retrieval"]:
             SAVE_PATH += "retrieval_"        
-        # if self.config["use_image_features"]:
-        #     SAVE_PATH += "with_img_features_"
-        
+
         if self.config["no_compression"]:
             SAVE_PATH += "no_compression_"       
 
@@ -527,7 +507,6 @@ class OLIVE(nn.Module):
         print(f"Loaded Object Encoder checkpoint from {SAVE_PATH}")
         if self.config["freeze_llm"]:
             if "gpt2" in self.config["llm_model"]:
-                #return
                 self.llama_model = AutoModelForCausalLM.from_pretrained(
                     SAVE_PATH).to(self.config["device"])
             return

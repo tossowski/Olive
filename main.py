@@ -75,16 +75,14 @@ def main(args):
             dataset = RefCOCODataset(os.path.join(DATA_FOLDER, "COCO2017", "refcocog"), os.path.join(DATA_FOLDER, "COCO2017", "train2017"), split="train", n_patches=config["n_patches"])
             train_loader = DataLoader(dataset, config["batch_size"],  shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'ALL':
-            dataset1 = RefCOCODataset(os.path.join(DATA_FOLDER, "COCO2017", "refcocog"),  os.path.join(DATA_FOLDER, "COCO2017", "train2017"), n_patches=config["n_patches"], split="train")
-            #dataset1 = VRPDataset("train", n_patches=config['n_patches'], use_object_annotations=config['use_object_annotations'])
-            dataset2 = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = config["examples_per_class"])
-            dataset3 = OCRDataset(config, n_patches=config['n_patches'])
-            dataset4 = ObjectInstructDataset(config, n_patches=config['n_patches'])
+            dataset1 = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = config["examples_per_class"])
+            dataset2 = RefCOCODataset(os.path.join(DATA_FOLDER, "COCO2017", "refcocog"),  os.path.join(DATA_FOLDER, "COCO2017", "train2017"), n_patches=config["n_patches"], split="train")
+            dataset3 = ObjectInstructDataset(config, n_patches=config['n_patches'])
 
-            dataset3.entries.extend(dataset1.entries)
-            dataset3.entries.extend(dataset2.entries)
+            random.shuffle(dataset1.entries)
+            random.shuffle(dataset2.entries)
             random.shuffle(dataset3.entries)
-            dataset3.entries.extend(dataset4.entries)
+            dataset3.entries = dataset1.entries + dataset2.entries + dataset3.entries
 
             dataset = dataset3
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
@@ -98,21 +96,20 @@ def main(args):
             if config['task'] == "refCOCOg":
                 print(f"Loading retrieval set from COCO Objects")
                 retrieval_dataset = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = config["examples_per_class"])
+            elif config['task'] == "ALL":
+                print(f"Loading retrieval set from COCO Objects")
+                retrieval_dataset = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = 1000000)
             else:
                 retrieval_dataset = dataset
-            # b_num is for caching
             model = OLIVE(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], b_num=b))    
         else:
             model = OLIVE(config, retrieval_fn = None)   
 
         print(f"Model SAVE/LOAD path is {model._get_save_path()}") 
         model.prepare_for_training()
-        #print(model)
 
         all_params = list(model.parameters())
         trainable_params = [x for x in all_params if x.requires_grad]
-        #print(len(trainable_params))
-        #print(len(all_params))
 
         optimizer = torch.optim.AdamW(trainable_params, lr=config['learning_rate'])
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(dataset) * config['n_epochs'] // config['batch_size'], 0.000001, last_epoch=-1)
@@ -124,15 +121,14 @@ def main(args):
 
         start_epoch = 0
         start_batch = 0
+
         if args.resume:
-                #checkpoint = {'epoch': epoch, "step": b_num, "optimizer": optimizer.state_dict(), "scheduler": scheduler}
             model.load()
             checkpoint = torch.load(os.path.join(model._get_save_path(), 'checkpoint.pth'))
             start_epoch = checkpoint['epoch']
             start_batch = checkpoint['step']
             scheduler = checkpoint['scheduler']
             optimizer.load_state_dict(checkpoint['optimizer'])
-            print(start_epoch, start_batch, scheduler.get_last_lr())
 
         for epoch in range(start_epoch, config["n_epochs"]):
             model.train()
@@ -153,31 +149,19 @@ def main(args):
                 else:
                     masks = masks.type(torch.BoolTensor)
                 
-
                 optimizer.zero_grad()
                 out = model(masks, images, questions, answers)
-                # try:
-                #     out = model(masks, images, questions, answers)
-                # except:
-                #     print("Skipped batch because of error")
-                #     continue
-                #print(batch["answer"][0])
-                #print(batch["question"][0])
-                if out == None:
-                    continue
 
                 loss = out.loss
                 past_losses.append(loss.item())
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
-                #print(scheduler.get_last_lr())
                 del loss
                 del out
 
                 torch.cuda.empty_cache()
-                #end_time = time.time()
-                #print(f"Backward Pass time: {end_time - start_time} seconds")
+   
 
                 if b_num > 0 and b_num % config["check_loss_steps"] == 0:
                     avg_loss = sum(past_losses[-config["check_loss_steps"]:]) / len(past_losses[-config["check_loss_steps"]:])
@@ -248,7 +232,7 @@ def main(args):
         elif config['task'] == 'OCR':
             dataset = OCRDataset(config, n_patches=config['n_patches'])
         elif config['task'] == 'ALL':
-            #dataset = RefCOCODataset("/data/ossowski/COCO2017/refcocog", "/data/ossowski/COCO2017/train", n_patches=config["n_patches"], split="val")
+            #dataset = RefCOCODataset(os.path.join(DATA_FOLDER, "COCO2017", "refcocog"), os.path.join(DATA_FOLDER, "COCO2017", "train2017"), n_patches=config["n_patches"], split="val")
             dataset = COCOObjectDataset(config, split="val", n_patches=config['n_patches'], max_examples_per_class = config["examples_per_class"])
             
             #dataset1 = VRPDataset("train", n_patches=config['n_patches'], use_object_annotations=config['use_object_annotations'])
@@ -274,7 +258,9 @@ def main(args):
                 retrieval_dataset = CXR8Dataset(config, split="train", n_patches=config["n_patches"])
             elif config['task'] == "refCOCOg":
                 retrieval_dataset = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = config["examples_per_class"])
-
+            elif config['task'] == 'ALL':
+                retrieval_dataset = COCOObjectDataset(config, split="train", n_patches=config['n_patches'], max_examples_per_class = 1000000)
+                
             model = OLIVE(config, retrieval_fn = lambda x, b: retrieval_dataset.retrieve_closest(x, config["retrieval_k"], train_phase=False, b_num=b))    
         else:
             model = OLIVE(config, retrieval_fn = None)    
@@ -296,7 +282,10 @@ def main(args):
             elif config["task"] == "refCOCOg":
                 eval_captioning(dataset, predictions)
             elif config["task"] == "ALL":
+                
                 eval_object_classification(dataset, predictions, config)
+                #eval_captioning(dataset, predictions)
+
             #exit()
 
         model.load()
@@ -344,11 +333,6 @@ def main(args):
                 responses[i]["question"] = batch['question'][0]
                 responses[i]["answer"] = batch['answer'][0].lower()
                 responses[i]["prediction"] = output
-
-                if output == answers[0].lower():
-                    print(responses[i])
-                    print(batch['bbox'][0])
-                # print(correct/total, exact_match/total)
 
         with open(OUTPUT_SAVE_PATH, "wb") as f:
             print(f"Saved model outputs to {OUTPUT_SAVE_PATH}")

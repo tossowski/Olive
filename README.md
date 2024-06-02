@@ -84,6 +84,7 @@ If you would like to try out the some of the models we trained, you can find the
 
 | Name | Description |
 | ------------- | ------------- |
+| [OLIVE-ALL](https://huggingface.co/tossowski/OLIVE-ALL) | Model trained on object classification, description, and instruction following. |
 | [OLIVE-G-Classification](https://huggingface.co/tossowski/OLIVE-G-Classification) | Model trained on object classification |
 | [OLIVE-RG-Classification](https://huggingface.co/tossowski/OLIVE-RG-Classification) | Model trained with retrieval on object classification |
 | [OLIVE-G-Captioning](https://huggingface.co/tossowski/OLIVE-G-Captioning) | Model trained on referring expression generation |

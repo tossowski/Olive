@@ -7,10 +7,8 @@ from PIL import Image
 from torch.utils.data import Dataset
 import pandas as pd
 
-
+# Medical Chest X-Ray Dataset
 class CXR8Dataset(Dataset):
-    # Path to instances.json
-    # Path to COCO2014/COCO2017 train images
     def __init__(self, config, split="train", n_patches=16):
         super(CXR8Dataset, self).__init__()
         self.config = config
@@ -27,13 +25,10 @@ class CXR8Dataset(Dataset):
             else:
                 cropped = ""
             retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl'
-            #retrieval_path = f'retrieval/{config["task"]}/retrieval_set_{config["examples_per_class"]}_{config["vision_encoder"].split("/")[-1]}.pkl'
             if "retrieval_set_path" in config:
                 retrieval_path = config["retrieval_set_path"]
-                #print(retrieval_path)
 
-            #retrieval_path = "retrieval/object_classification/retrieval_set_1000000_1_clip-vit-large-patch14.pkl"
-            #retrieval_path = "retrieval/object_classification/retrieval_set_1000000_dinov2-large.pkl"
+
             if os.path.exists(retrieval_path):
                 with open(retrieval_path, 'rb') as f:
                     
@@ -44,6 +39,8 @@ class CXR8Dataset(Dataset):
                     assert len(self.retrieval_keys) == len(self.retrieval_labels)
                     print(f'Loaded {len(self.retrieval_keys)} examples from {retrieval_path}.pkl')
     
+    # Given a bounding box, get the Vision Transformer binary mask of shape
+    # (1, n_patches ** 2 + 1)
     def _get_ViT_mask(self, bbox, height, width):
         arr = np.zeros((self.n_patches, self.n_patches))
         x_min, y_min, w, h = bbox
@@ -51,10 +48,8 @@ class CXR8Dataset(Dataset):
         x_max = x_min + w
         height_bins = np.linspace(0, height, self.n_patches)
         width_bins = np.linspace(0, width, self.n_patches)
-        #print(x_min, x_max, y_min, y_max)
         x_min, x_max = np.digitize(np.array([x_min, x_max]), width_bins)
         y_min, y_max = np.digitize(np.array([y_min, y_max]), height_bins)
-        #print(x_min, x_max, y_min, y_max)
         if y_min == y_max:
             y_max += 1
         if x_min == x_max:
@@ -143,7 +138,8 @@ class CXR8Dataset(Dataset):
 
     # Should take in argument k: how many closest objects to retrieve
     # and object features: the ViT features of query objects
-    # Return: The k closest examples from self.entries
+    # Return: The k closest examples from self.entries according to cosine similarity
+    # Note: features should be normalized so dot product == cosine similarity
     def retrieve_closest(self, object_features, k, train_phase = True, b_num=-1):
 
         dist_matrix = (object_features @ self.retrieval_keys.T)

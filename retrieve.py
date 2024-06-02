@@ -25,6 +25,9 @@ from matplotlib import pyplot as plt
 
 import json
 
+
+# Gets an object feature based on ViT masks of shape (1, n_patches ** 2 + 1)
+# Feature is obtained by taking the mean of the patch features of the object
 def get_object_feature(batch, processor, model, config):
     masks = batch["vit_mask"]
     images = batch['path_to_image']
@@ -146,8 +149,6 @@ def main(args):
         retrieval_set['values'] = labels
         retrieval_set['idx'] = retrieval_index
 
-        print(retrieval_set['keys'][-1,:])
-
         os.makedirs(f"retrieval/{config['task']}", exist_ok=True)
         with open(retrieval_path, 'wb') as f:
             print(retrieval_path)
@@ -210,7 +211,6 @@ def main(args):
             image_id = batch['id'][0]
             bbox = batch['bbox'][0]
     
-            #if True:
             if b_num not in cache:
                 object_feature = get_object_feature(batch, processor, model, config)
                 if object_feature == None:
@@ -290,7 +290,7 @@ def main(args):
             performances[i] = round(majority_correct / len(dataset), 4)
         print(performances)
 
-
+        # Cache results so we don't have to compute retrieval similarity again
         os.makedirs(f"cache/{config['task']}", exist_ok=True)
         with open(f'cache/{config["task"]}/retrieval_cache_{config["examples_per_class"]}_{cropped}{config["vision_encoder"].split("/")[-1]}.pkl', 'wb') as f:
             pickle.dump(cache, f)

@@ -21,7 +21,7 @@ class RefCOCODataset(Dataset):
                         "[obj] Describe this part of the image.",
                         "[obj] Share some details about what's happening here in the image.",
                         "[obj] Break down what you see in this particular part of the picture.",
-                        "[obj] Fill me in on the details of this section in the picture.",
+                        "Here is an object [obj]. Describe this object.",
                         "[obj] Describe what you notice in this area of the picture."]
         self.split = split
         self.image_dict = {}

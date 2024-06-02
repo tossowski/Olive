@@ -11,9 +11,19 @@ import random
 from tqdm import tqdm
 from torch.utils.data import Dataset
 
+
+# A class to allow you to create a custom retrieval dataset
+# Make sure you have a folder with images in it. 
+# Each image should be named x.png or x.jpg, where x is a 
+# whole number.
+# The folder should also have a file called labels.txt in it,
+# where line number x contains the label for x.png or x.jpg
+# See additional_examples folder for an example of this
+#
+# Once you have created your folder, run python retrieve.py --train
+# with additional_retrieval_examples filled in the config to create
+# the retrieval set
 class RetrievalDataset(Dataset):
-    # Path to instances.json
-    # Path to COCO2014/COCO2017 train images
     def __init__(self, config):
         super(RetrievalDataset, self).__init__()
         self.config = config
@@ -27,7 +37,6 @@ class RetrievalDataset(Dataset):
         
     
     def _load_dataset(self):
-
         entries = []
         labels = []
         path_to_images = self.config["additional_retrieval_examples"]
@@ -35,12 +44,12 @@ class RetrievalDataset(Dataset):
             for line in f:
                 labels.append(line.strip())
 
-        image_filenames = [x for x in os.listdir(path_to_images) if x.endswith(".png")]
+        image_filenames = [x for x in os.listdir(path_to_images) if x.endswith(".png") or x.endswith(".jpg")]
         all_images = sorted(image_filenames, key = lambda x: int(x.split(".")[0]))
         i = 0
         for f_name in tqdm(all_images):
             path_to_image = os.path.join(path_to_images, f_name)
-            if not path_to_image.endswith("png"):
+            if not (path_to_image.endswith("png") or path_to_image.endswith("jpg")):
                 continue
             image = Image.open(path_to_image)
             segmentations = np.ones(self.n_patches ** 2 + 1)
@@ -90,5 +99,4 @@ class RetrievalDataset(Dataset):
 
     def __getitem__(self, index):
         entry = self.entries[index]
-
         return entry

@@ -82,25 +82,18 @@ class ObjectEncoder(nn.Module):
         return last_hidden_state, pooled_output, hidden_states
 
 
-    # Expects segmentations to be (b_s, patch_size ** 2 + 1) binary tensor
+    # Expects segmentations to be (b_s, patch_size ** 2 + 1) binary mask tensor
     # Returns (batch_size, hidden dimension tensor) (representation of object)
     # Which can be inserted directly into the embedding space of LLM
     def forward(self, segmentations, image_features):
-        #print(image_features.shape)
         lengths = torch.sum(segmentations, axis = 1).to(self.config["device"])
         max_length = max(lengths)
         attention_mask = torch.arange(max_length).to(self.config["device"])[None, :] < lengths[:, None]
-        #print(image_features.shape)
-        #print(lengths)
-        #print(max_length)
-        #print(attention_mask)
         test = [image_features[i][segmentations[i]] for i in range(image_features.shape[0])]
         features = pad_sequence(test, batch_first=True)
 
         if self.config["no_compression"]:
             return self.projector(features[0])
-        else:
-        #out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]
+        else: # get pooled representation of image patches and project to LLM space
             out = self.transformer.vision_model(pixel_values = features, attention_mask = attention_mask)[1]
-            #print(features.shape)
             return self.projector(out)
