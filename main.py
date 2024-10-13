@@ -7,7 +7,6 @@ from dataset.objectCOCO import COCOObjectDataset
 from dataset.LVIS import LVISDataset
 from dataset.CXR8 import CXR8Dataset
 from dataset.VRP import VRPDataset
-from dataset.pointqa import PointQADataset
 from dataset.ocr import OCRDataset
 from dataset.visual7w import Visual7WDataset
 from dataset.objectInstruct import ObjectInstructDataset
