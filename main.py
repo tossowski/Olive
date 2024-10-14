@@ -8,7 +8,6 @@ from dataset.LVIS import LVISDataset
 from dataset.CXR8 import CXR8Dataset
 from dataset.VRP import VRPDataset
 from dataset.ocr import OCRDataset
-from dataset.visual7w import Visual7WDataset
 from dataset.objectInstruct import ObjectInstructDataset
 from dataset.visualgenome import VisualGenomeDataset
 from torch.utils.data import DataLoader
@@ -48,16 +47,9 @@ def main(args):
         elif config['task'] == 'GRIT':
             dataset = GRITDataset("/data/ossowski/GRIT", n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
-        elif config['task'] == 'PointQA':
-            dataset = PointQADataset(config, n_patches=config['n_patches'])
-            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
         elif config['task'] == 'OCR':
             dataset = OCRDataset(config, n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
-        elif config['task'] == 'Visual7W':
-            dataset = Visual7WDataset(config, n_patches=config['n_patches'])
-            train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2, collate_fn=dataset.collate_fn)
-        
         elif config['task'] == "open_vocab_object_classification":
             dataset = LVISDataset(config, split="val", n_patches=config['n_patches'])
             train_loader = DataLoader(dataset, config["batch_size"], shuffle=False, num_workers=2)
@@ -226,8 +218,6 @@ def main(args):
             dataset = CountCOCODataset(n_patches=config['n_patches'])
         elif config['task'] == 'medical_object_classification':
             dataset = CXR8Dataset(config, split="test", n_patches=config["n_patches"])
-        elif config['task'] == 'Visual7W':
-            dataset = Visual7WDataset(config, split="test", n_patches=config['n_patches'])
         elif config['task'] == 'OCR':
             dataset = OCRDataset(config, n_patches=config['n_patches'])
         elif config['task'] == 'ALL':
