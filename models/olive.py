@@ -506,9 +506,10 @@ class OLIVE(nn.Module):
         self.object_encoder.load_state_dict(torch.load(os.path.join(SAVE_PATH, "llama_2_7b_adapter_finetuned")))
         print(f"Loaded Object Encoder checkpoint from {SAVE_PATH}")
         if self.config["freeze_llm"]:
-            if "gpt2" in self.config["llm_model"]:
-                self.llama_model = AutoModelForCausalLM.from_pretrained(
-                    SAVE_PATH).to(self.config["device"])
+            return
+        if "gpt2" in self.config["llm_model"]:
+            self.llama_model = AutoModelForCausalLM.from_pretrained(
+                SAVE_PATH).to(self.config["device"])
             return
         
         self.llama_model = PeftModel.from_pretrained(self.llama_model, SAVE_PATH)

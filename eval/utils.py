@@ -1,9 +1,9 @@
-from eval.pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
-from eval.pycocoevalcap.bleu.bleu import Bleu
-from eval.pycocoevalcap.meteor.meteor import Meteor
-from eval.pycocoevalcap.rouge.rouge import Rouge
-from eval.pycocoevalcap.cider.cider import Cider
-from eval.pycocoevalcap.spice.spice import Spice
+from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+from pycocoevalcap.bleu.bleu import Bleu
+from pycocoevalcap.meteor.meteor import Meteor
+from pycocoevalcap.rouge.rouge import Rouge
+from pycocoevalcap.cider.cider import Cider
+from pycocoevalcap.spice.spice import Spice
 from dataset.RefCOCO import RefCOCODataset
 import json
 import os
