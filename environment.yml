@@ -1,4 +1,4 @@
-name: olive
+name: olivetest
 channels:
   - conda-forge
   - defaults
@@ -112,7 +112,7 @@ dependencies:
     - einops-exts==0.0.4
     - exceptiongroup==1.1.2
     - exifread-nocycle==3.0.1
-    - fastapi==0.100.0
+    - fastapi==0.112.2
     - fastparquet==2023.8.0
     - ffmpy==0.3.1
     - fiftyone==0.21.6

@@ -11,8 +11,8 @@ freeze_vision_encoder: True
 freeze_llm: False
 save_folder: "./checkpoints"
 #task: "image_captioning"
-#task: "object_classification"
-task: "medical_object_classification"
+task: "object_classification"
+#task: "medical_object_classification"
 #task: "open_vocab_object_classification"
 #task: "counting"
 #task: "relation_prediction"
@@ -40,17 +40,16 @@ n_epochs: 1
 
 #load_model_path: "./checkpoints/llama_2_finetuned_checkpoints/object_classification/frozen_llm_clip_retrieval_16x16_patches"
 #load_model_path: "./checkpoints/llama_2_finetuned_checkpoints/object_classification/frozen_llm_clip_16x16_patches"
-load_model_path: "./checkpoints/llama_2_finetuned_checkpoints/object_classification/finetuned_llm_clip_336_retrieval_24x24_patches"
-
+#load_model_path: "./checkpoints/llama_2_finetuned_checkpoints/object_classification/finetuned_llm_clip_336_retrieval_24x24_patches"
 #load_model_path: False
 
 #retrieval_set_path: "retrieval/object_classification/retrieval_set_1000000_clip-vit-large-patch14-336.pkl"
 retrieval_set_path: "retrieval/medical_object_classification/retrieval_set_1000000_cropped_clip-vit-large-patch14-336.pkl"
 #retrieval_set_path: "retrieval/medical_object_classification/retrieval_set_1000000_cropped_clip-vit-large-patch14-336.pkl"
 
-use_retrieval: True # Whether or not to retrieve in-context examples
+use_retrieval: False # Whether or not to retrieve in-context examples
 retrieval_k: 5 # Number of retrieved in-context examples
 #additional_retrieval_examples: "./adversarial_examples"
 majority_vote_retrieval: False
 use_image_features: False # Concatenate ViT Image Features to LLM Input Embeddings (slow!)
-crop_image: True
+crop_image: False
