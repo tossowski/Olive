@@ -111,8 +111,22 @@ python main.py --test --config <path_to_config_file>
 
 For the object classification task, if you want to check the mAP metric commonly used by COCO, please refer to [their API](https://github.com/cocodataset/cocoapi/tree/master). Our code should output a `test.json` file in the `outputs` folder which you can directly use with the API to evaluate mAP.
 
-After training, you can also test the model qualitatively using our demo notebook. Run the cells in the `demo.ipynb` notebook to open the gradio interface:
+After training, you can also test the model qualitatively using our demo notebook. Run the demo script called `demo.py` to open the gradio interface:
+
+```python
+python main.py --test --config <path_to_config_file>
+```
 
 ![Gradio Interface](images/example.png)
 
 To use the demo, make sure to put `[obj]` in your chat message to refer to your selected object. This will be replaced by the object feature during input preparation.
+
+### Citation
+```bibtex
+@article{ossowski2024olive,
+  title={OLIVE: Object Level In-Context Visual Embeddings},
+  author={Ossowski, Timothy and Hu, Junjie},
+  journal={arXiv preprint arXiv:2406.00872},
+  year={2024}
+}
+```
